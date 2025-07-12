@@ -1,0 +1,8 @@
+node_modules
+.env
+dist
+*.crt
+*.key
+*.log
+*.pem
+*.pid

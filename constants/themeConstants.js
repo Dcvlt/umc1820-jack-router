@@ -1,0 +1,62 @@
+// Theme configurations
+export const themes = {
+  light: {
+    background:
+      'linear-gradient(135deg,rgb(153, 153, 153) 0%, rgba(99, 217, 253, 0.89)100%)',
+    cardBg: 'rgba(255, 255, 255, 0.9)',
+    headerBg: 'rgba(255, 255, 255, 0.95)',
+    matrixBg: 'rgba(255, 255, 255, 0.8)',
+    text: '#333',
+    headerText: '#2c3e50',
+    nodeText: '#2c3e50',
+    border: 'rgba(0, 0, 0, 0.1)',
+    buttonActive: 'rgba(78, 124, 248, 0.9)',
+    buttonActiveBorder: '#90caf9',
+    buttonInactive: 'rgba(0, 0, 0, 0.29)',
+    controlBg: 'rgba(255, 255, 255, 0.9)',
+    gridLine: 'rgba(68, 68, 68, 0.51)',
+    gridBg: '#f5f5f5',
+    groupHeaderBg: '#e3f2fd',
+    groupBorder: '#90caf9',
+    // headerBg and headerText already present
+  },
+  dark: {
+    background:
+      'linear-gradient(135deg,rgb(26, 29, 34) 0%,rgb(15, 26, 46) 100%)',
+    cardBg: 'rgba(255, 255, 255, 0.05)',
+    headerBg: 'rgba(255, 255, 255, 0.1)',
+    matrixBg: 'rgba(255, 255, 255, 0.1)',
+    text: 'white',
+    headerText: 'white',
+    nodeText: 'white',
+    border: 'rgba(255, 255, 255, 0.1)',
+    buttonActive: 'rgba(19, 19, 29, 0.9)',
+    buttonActiveBorder: 'rgba(72, 109, 212, 0.5)',
+    buttonInactive: 'rgba(255, 255, 255, 0.2)',
+    controlBg: 'rgba(19, 19, 29, 0.9)',
+    gridLine: '#444',
+    gridBg: '#222',
+    groupHeaderBg: 'rgba(19, 19, 29, 0.9)',
+    groupBorder: 'rgba(72, 109, 212, 0.5)',
+    // headerBg and headerText already present
+  },
+  sports: {
+    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    cardBg: 'rgba(255, 255, 255, 0.1)',
+    headerBg: 'rgba(255, 255, 255, 0.15)',
+    matrixBg: 'rgba(255, 255, 255, 0.08)',
+    text: 'black',
+    headerText: 'black',
+    nodeText: 'white',
+    border: 'rgba(255, 255, 255, 0.2)',
+    buttonActive: '#9f7aea',
+    buttonActiveBorder: '#764ba2',
+    buttonInactive: 'rgba(215, 156, 255, 0.49)',
+    controlBg: 'rgba(255, 255, 255, 0.9)',
+    gridLine: 'rgba(255, 255, 255, 0.9)',
+    gridBg: 'rgba(223, 174, 255, 0.48)',
+    groupHeaderBg: '#b3a7f7',
+    groupBorder: '#764ba2',
+    // headerBg and headerText already present
+  },
+};
