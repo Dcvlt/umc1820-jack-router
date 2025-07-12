@@ -6,3 +6,5 @@ dist
 *.log
 *.pem
 *.pid
+audio_router_state.json
+audio_router_state.backup.json
