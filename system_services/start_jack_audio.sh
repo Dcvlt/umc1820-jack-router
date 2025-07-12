@@ -1,11 +1,12 @@
-# JACK Audio Router Service Startup Script
-# This script starts the Node.js service and handles persistence
-
-PROJECT_DIR="/mnt/c/Users/Exyth/Desktop/umc1820-jack-router"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"  # Assumes script is in system_services subdirectory
 NODE_SERVICE="server.js"
 PID_FILE="$PROJECT_DIR/jack_audio.pid"
 LOG_FILE="$PROJECT_DIR/jack_audio.log"
 STATE_FILE="$PROJECT_DIR/last_state.json"
+
+# Development mode flag
+DEV_MODE=true
 
 # Colors for output
 RED='\033[0;31m'
@@ -55,7 +56,30 @@ check_jack_server() {
     return 1
 }
 
-# Function to start the service (modified)
+# Function to check if npm is available and package.json exists
+check_npm_setup() {
+    if [ ! -f "$PROJECT_DIR/package.json" ]; then
+        log_message "${RED}Error: package.json not found in $PROJECT_DIR"
+        return 1
+    fi
+    
+    if ! command -v npm &> /dev/null; then
+        log_message "${RED}Error: npm command not found"
+        return 1
+    fi
+    
+    # Check if dev script exists in package.json
+    if ! grep -q '"dev"' "$PROJECT_DIR/package.json"; then
+        log_message "${YELLOW}Warning: 'dev' script not found in package.json"
+        log_message "Make sure you have a 'dev' script defined like:"
+        log_message '  "scripts": { "dev": "nodemon server.js" }'
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to start the service (modified for dev mode)
 start_service() {
     if is_running; then
         log_message "${YELLOW}Service is already running (PID: $(cat $PID_FILE))"
@@ -76,20 +100,38 @@ start_service() {
         exit 1
     }
 
-    # Start the Node.js service in background
-    nohup node "$NODE_SERVICE" >> "$LOG_FILE" 2>&1 &
-    service_pid=$!
+    # Start the service based on mode
+    if [ "$DEV_MODE" = true ]; then
+        log_message "Starting in development mode with npm run dev..."
+        
+        # Check npm setup
+        if ! check_npm_setup; then
+            log_message "${RED}Cannot start in dev mode, falling back to node server.js"
+            nohup node "$NODE_SERVICE" >> "$LOG_FILE" 2>&1 &
+            service_pid=$!
+        else
+            # Start with npm run dev
+            nohup npm run dev >> "$LOG_FILE" 2>&1 &
+            service_pid=$!
+        fi
+    else
+        log_message "Starting in production mode..."
+        # Start the Node.js service directly
+        nohup node "$NODE_SERVICE" >> "$LOG_FILE" 2>&1 &
+        service_pid=$!
+    fi
     
     # Save PID
     echo $service_pid > "$PID_FILE"
     
     # Wait a moment and check if it's still running
-    sleep 2
+    sleep 3
     if is_running; then
         log_message "${GREEN}Service started successfully (PID: $service_pid)"
         return 0
     else
         log_message "${RED}Failed to start service"
+        log_message "Check the log file for details: $LOG_FILE"
         return 1
     fi
 }
@@ -165,10 +207,6 @@ restore_previous_state() {
         return 1
     fi
     
-    # Extract and restore connections from saved state
-    # This is a simplified approach - you might want to enhance this
-    # to parse the JSON and restore specific connections
-    
     log_message "Service is ready, state restoration complete"
     return 0
 }
@@ -186,6 +224,11 @@ restart_service() {
 
 # Function to show service status
 show_status() {
+    echo -e "${YELLOW}=== JACK Audio Router Service Status ===${NC}"
+    echo -e "Project Directory: $PROJECT_DIR"
+    echo -e "Development Mode: $DEV_MODE"
+    echo ""
+    
     if is_running; then
         pid=$(cat "$PID_FILE")
         echo -e "${GREEN}✓ JACK Audio Router Service is running (PID: $pid)${NC}"
@@ -204,6 +247,10 @@ show_status() {
     else
         echo -e "${RED}✗ JACK Audio Router Service is not running${NC}"
     fi
+    
+    # Check JACK server status
+    echo -e "\n${YELLOW}JACK Server Status:${NC}"
+    check_jack_server
 }
 
 # Function to show logs
@@ -213,6 +260,33 @@ show_logs() {
         tail -n 50 "$LOG_FILE"
     else
         echo -e "${RED}No log file found${NC}"
+    fi
+}
+
+# Function to toggle development mode
+toggle_dev_mode() {
+    if [ "$DEV_MODE" = true ]; then
+        sed -i 's/DEV_MODE=true/DEV_MODE=false/' "$0"
+        log_message "Development mode disabled"
+    else
+        sed -i 's/DEV_MODE=false/DEV_MODE=true/' "$0"
+        log_message "Development mode enabled"
+    fi
+}
+
+# Function to install dependencies
+install_deps() {
+    log_message "Installing npm dependencies..."
+    cd "$PROJECT_DIR" || {
+        log_message "${RED}Error: Cannot change to project directory"
+        exit 1
+    }
+    
+    npm install
+    if [ $? -eq 0 ]; then
+        log_message "${GREEN}Dependencies installed successfully"
+    else
+        log_message "${RED}Failed to install dependencies"
     fi
 }
 
@@ -230,7 +304,7 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$PROJECT_DIR
-ExecStart=/usr/bin/node $PROJECT_DIR/$NODE_SERV ICE
+ExecStart=/usr/bin/node $PROJECT_DIR/$NODE_SERVICE
 Restart=always
 RestartSec=10
 StandardOutput=append:$LOG_FILE
@@ -279,8 +353,14 @@ case "$1" in
     restore-state)
         restore_previous_state
         ;;
+    toggle-dev)
+        toggle_dev_mode
+        ;;
+    install-deps)
+        install_deps
+        ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|logs|install-service|save-state|restore-state}"
+        echo "Usage: $0 {start|stop|restart|status|logs|install-service|save-state|restore-state|toggle-dev|install-deps}"
         echo ""
         echo "Commands:"
         echo "  start           - Start the JACK Audio Router service"
@@ -291,6 +371,10 @@ case "$1" in
         echo "  install-service - Install as systemd service"
         echo "  save-state      - Manually save current audio routing state"
         echo "  restore-state   - Manually restore previous audio routing state"
+        echo "  toggle-dev      - Toggle between development and production mode"
+        echo "  install-deps    - Install npm dependencies"
+        echo ""
+        echo "Current mode: $([ "$DEV_MODE" = true ] && echo "Development (npm run dev)" || echo "Production (node server.js)")"
         exit 1
         ;;
 esac
