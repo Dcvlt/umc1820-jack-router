@@ -1,0 +1,32 @@
+{
+  "server": {
+    "api_port": 6666,
+    "websocket_port": 6667,
+    "host": "0.0.0.0",
+    "max_connections": 100,
+    "timeout_seconds": 30
+  },
+  "jack": {
+    "windows_host": "host.docker.internal",
+    "tools_path": "C:/PROGRA~1/JACK2/tools",
+    "timeout_ms": 10000,
+    "reconnect_interval_ms": 5000,
+    "monitor_interval_ms": 1000,
+    "auto_reconnect": true
+  },
+  "logging": {
+    "level": "info",
+    "file_enabled": true,
+    "file_path": "/app/logs/jack-bridge.log",
+    "console_enabled": true,
+    "max_file_size_mb": 10,
+    "max_files": 5
+  },
+  "features": {
+    "auto_reconnect": true,
+    "connection_monitoring": true,
+    "state_persistence": true,
+    "websocket_updates": true,
+    "health_monitoring": true
+  }
+}
