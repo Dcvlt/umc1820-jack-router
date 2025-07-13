@@ -6,6 +6,10 @@ set JACK_PATH=C:\Program Files\JACK2
 set WSL_DISTRO=Ubuntu
 set SCRIPT_DIR=%~dp0
 
+echo Using JACK path: %JACK_PATH%
+echo Using WSL distribution: %WSL_DISTRO%
+echo Using script directory: %SCRIPT_DIR%
+
 REM Start JACK Server first (minimized)
 echo Starting JACK Server minimized...
 start "JACK Server" /min "%JACK_PATH%\qjackctl\qjackctl.exe" -s
@@ -16,11 +20,11 @@ timeout /t 10 /nobreak > nul
 
 REM Ensure shell script has execute permissions
 echo Setting execute permissions on shell script...
-wsl -d %WSL_DISTRO% -e bash -c "chmod +x '%SCRIPT_DIR%start_jack_audio.sh'"
+wsl -d %WSL_DISTRO% --cd "%SCRIPT_DIR%" -e bash -c "chmod +x start_jack_audio.sh && ./start_jack_audio.sh start"
 
 REM Start Node.js service in WSL using the shell script
 echo Starting Node.js service in WSL...
-wsl -d %WSL_DISTRO% -e bash -c "cd '%SCRIPT_DIR%' && ./start_jack_audio.sh start"
+wsl -d %WSL_DISTRO% --cd "%SCRIPT_DIR%" -e bash -c "cd '%SCRIPT_DIR%' && ./start_jack_audio.sh start"
 
 echo JACK Audio Router Service started successfully!
 echo Both JACK Server and Node.js service are running.

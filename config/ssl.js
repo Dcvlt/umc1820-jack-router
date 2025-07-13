@@ -1,15 +1,21 @@
-// config/ssl.js
+// config/ssl.js - Updated to work with your current environment structure
 const fs = require('fs').promises;
 const path = require('path');
 const { exec } = require('child_process');
 const { promisify } = require('util');
-const config = require('./index');
+const config = require('./environment'); // Import environment directly
 
 const execAsync = promisify(exec);
 
 class SSLManager {
   constructor() {
-    this.sslPaths = config.paths.ssl;
+    // Create SSL paths object based on your current config structure
+    this.sslPaths = {
+      dir: config.SSL_DIR,
+      key: path.join(config.SSL_DIR, 'private.key'),
+      cert: path.join(config.SSL_DIR, 'certificate.crt'),
+      ca: path.join(config.SSL_DIR, 'ca_bundle.crt'),
+    };
   }
 
   /**
@@ -33,6 +39,19 @@ class SSLManager {
       return options;
     } catch (error) {
       console.error('❌ SSL certificate files not found:', error.message);
+
+      // Auto-generate if enabled
+      if (config.SSL_AUTO_GENERATE) {
+        console.log(
+          '🔐 SSL_AUTO_GENERATE is enabled, attempting to generate certificates...'
+        );
+        const generated = await this.generateSelfSignedCert();
+        if (generated) {
+          // Recursively try to get SSL options after generation
+          return await this.getSSLOptions();
+        }
+      }
+
       this._printSSLInstructions();
       return null;
     }
@@ -59,12 +78,19 @@ class SSLManager {
       await execAsync(opensslCommand);
 
       console.log('✅ Self-signed SSL certificate generated successfully');
-      console.log('⚠️ Note: Browsers will show a security warning for self-signed certificates');
-      console.log('   You can safely proceed by clicking "Advanced" -> "Proceed to localhost"');
+      console.log(
+        '⚠️ Note: Browsers will show a security warning for self-signed certificates'
+      );
+      console.log(
+        '   You can safely proceed by clicking "Advanced" -> "Proceed to localhost"'
+      );
 
       return true;
     } catch (error) {
-      console.error('❌ Failed to generate self-signed certificate:', error.message);
+      console.error(
+        '❌ Failed to generate self-signed certificate:',
+        error.message
+      );
       this._printOpenSSLInstructions();
       return false;
     }
@@ -92,8 +118,10 @@ class SSLManager {
     console.log('   2. Place your SSL certificate files:');
     console.log('      - ssl/private.key (private key)');
     console.log('      - ssl/certificate.crt (certificate)');
-    console.log('      - ssl/ca_bundle.crt (certificate authority bundle - optional)');
-    console.log('   3. Or use the self-signed certificate generation below');
+    console.log(
+      '      - ssl/ca_bundle.crt (certificate authority bundle - optional)'
+    );
+    console.log('   3. Or set SSL_AUTO_GENERATE=true in your .env file');
   }
 
   /**
@@ -101,8 +129,12 @@ class SSLManager {
    */
   _printOpenSSLInstructions() {
     console.log('💡 Make sure OpenSSL is installed and available in your PATH');
-    console.log('   Windows: Download from https://slproweb.com/products/Win32OpenSSL.html');
-    console.log('   Or use Windows Subsystem for Linux (WSL) with OpenSSL installed');
+    console.log(
+      '   Windows: Download from https://slproweb.com/products/Win32OpenSSL.html'
+    );
+    console.log(
+      '   Or use Windows Subsystem for Linux (WSL) with OpenSSL installed'
+    );
   }
 
   /**
