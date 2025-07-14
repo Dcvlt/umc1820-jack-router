@@ -1,12 +1,12 @@
 import React from 'react';
 import { useAudioRouter } from '../hooks/useAudioRouter.js';
-import { LoadingScreen } from '../components/loadingScreen.jsx';
-import { ThemeControls } from '../components/themeControls.jsx';
-import { StatusBar } from '../components/statusBar.jsx';
-import { Messages } from '../components/messages.jsx';
-import { PresetControls } from '../components/presetControls.jsx';
-import { ConnectionMatrix } from '../components/connectionMatrix.jsx';
-import { Toast } from '../components/toast.jsx';
+import { LoadingScreen } from './components/loadingScreen.jsx';
+import { ThemeControls } from './components/themeControls.jsx';
+import { StatusBar } from './components/statusBar.jsx';
+import { Messages } from './components/messages.jsx';
+import { PresetControls } from './components/presetControls.jsx';
+import { ConnectionMatrix } from './components/connectionMatrix.jsx';
+import { Toast } from './components/toast.jsx';
 import { themes } from '../constants/themeConstants.js';
 
 export const JackAudioRouter = ({ initialData }) => {
