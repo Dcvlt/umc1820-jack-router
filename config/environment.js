@@ -20,8 +20,8 @@ const isProd = NODE_ENV === 'production';
 const isTest = NODE_ENV === 'test';
 
 // Server configuration
-const PORT = parseInt(process.env.PORT || '3001', 10);
-const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '3443', 10);
+const PORT = parseInt(process.env.PORT || '5555', 10);
+const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '5556', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 
 // Validate ports
@@ -83,9 +83,9 @@ const CORS_ORIGINS = process.env.CORS_ORIGINS
   : isDev
     ? [
         'http://localhost:3000',
-        'http://localhost:3001',
+        'http://localhost:5555',
         'http://localhost:5173',
-        'https://localhost:3443',
+        'https://localhost:5556',
       ]
     : ['*']; // Allow all in production by default (adjust as needed)
 

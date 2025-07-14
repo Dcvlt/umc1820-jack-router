@@ -29,13 +29,13 @@ build-dev: ## Build development images
 up: ## Start all services in production mode
 	@echo "🚀 Starting JACK Audio Router services..."
 	docker-compose up -d
-	@echo "✅ Services started. Access web interface at http://localhost:3001"
+	@echo "✅ Services started. Access web interface at http://localhost:5555"
 
 dev: ## Start development environment
 	@echo "🔧 Starting development environment..."
 	docker-compose --profile dev up -d
 	@echo "✅ Development environment started."
-	@echo "   Web interface: http://localhost:3001"
+	@echo "   Web interface: http://localhost:5555"
 	@echo "   Vite dev server: http://localhost:5173"
 
 down: ## Stop all services
@@ -81,7 +81,7 @@ health: ## Check health of all services
 	@echo "API Health Checks:"
 	@echo "==================="
 	@echo -n "Router API: "
-	@curl -s -f http://localhost:3001/health >/dev/null && echo "✅ Healthy" || echo "❌ Unhealthy"
+	@curl -s -f http://localhost:5555/health >/dev/null && echo "✅ Healthy" || echo "❌ Unhealthy"
 	@echo -n "Bridge API: "
 	@curl -s -f http://localhost:6666/health >/dev/null && echo "✅ Healthy" || echo "❌ Unhealthy"
 
@@ -168,12 +168,12 @@ network: ## Show Docker network information
 # Quick commands
 quick-start: build up ## Quick start: build and run
 	@echo "🚀 JACK Audio Router is running!"
-	@echo "   Web interface: http://localhost:3001"
-	@echo "   API health: http://localhost:3001/health"
+	@echo "   Web interface: http://localhost:5555"
+	@echo "   API health: http://localhost:5555/health"
 
 quick-dev: build-dev dev ## Quick development start
 	@echo "🔧 Development environment ready!"
-	@echo "   Web interface: http://localhost:3001"
+	@echo "   Web interface: http://localhost:5555"
 	@echo "   Vite dev server: http://localhost:5173"
 
 # Help for Windows users

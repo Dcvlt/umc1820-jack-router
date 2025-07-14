@@ -274,7 +274,7 @@ check_deployment_health() {
     
     local health_checks=(
         "http://localhost:6666/health:JACK Bridge"
-        "http://localhost:3001/health:JACK Router"
+        "http://localhost:5555/health:JACK Router"
     )
     
     local all_healthy=true
@@ -293,8 +293,8 @@ check_deployment_health() {
     
     if $all_healthy; then
         log "🎉 Deployment successful! All services are healthy."
-        log "🌐 Web interface: https://localhost:3443"
-        log "📡 API endpoint: https://localhost:3443/api"
+        log "🌐 Web interface: https://localhost:5556"
+        log "📡 API endpoint: https://localhost:5556/api"
     else
         error "❌ Deployment completed with health check failures"
         log "📋 Check logs with: cd ${DEPLOYMENT_DIR} && docker-compose logs"
@@ -335,7 +335,7 @@ case "\$1" in
         ;;
     health)
         echo "Health check:"
-        curl -s http://localhost:3001/health | jq . || echo "Router API not responding"
+        curl -s http://localhost:5555/health | jq . || echo "Router API not responding"
         curl -s http://localhost:6666/health | jq . || echo "Bridge API not responding"
         ;;
     backup)
@@ -383,8 +383,8 @@ main() {
     log ""
     log "🎉 Deployment Complete!"
     log "======================"
-    log "Web Interface: https://localhost:3443"
-    log "API Endpoint: https://localhost:3443/api"
+    log "Web Interface: https://localhost:5556"
+    log "API Endpoint: https://localhost:5556/api"
     log "Control Service: jack-router {start|stop|restart|status|logs|health}"
     log "Logs Location: ${DEPLOYMENT_DIR}/logs/"
     log "Backup Location: ${DEPLOYMENT_DIR}/backups/"

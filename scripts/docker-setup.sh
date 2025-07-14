@@ -114,8 +114,8 @@ DEPLOYMENT_MODE=docker
 
 # Server configuration
 NODE_ENV=production
-PORT=3001
-HTTPS_PORT=3443
+PORT=5555
+HTTPS_PORT=5556
 HOST=0.0.0.0
 FORCE_HTTPS=true
 
@@ -137,7 +137,7 @@ MQTT_CLIENT_ID=jack-audio-router-docker
 
 # Home Assistant Integration
 HA_INTEGRATION_ENABLED=true
-CORS_ORIGINS=https://localhost:3443,https://homeassistant.local:8123
+CORS_ORIGINS=https://localhost:5556,https://homeassistant.local:8123
 CSP_FRAME_ANCESTORS=https://homeassistant.local:8123
 
 # Logging
@@ -322,7 +322,7 @@ start_services() {
                 bridge_ok=true
             fi
             
-            if curl -s -f http://localhost:3001/health >/dev/null 2>&1; then
+            if curl -s -f http://localhost:5555/health >/dev/null 2>&1; then
                 router_ok=true
             fi
             
@@ -353,7 +353,7 @@ health_check() {
     
     local checks=(
         "http://localhost:6666/health:JACK Bridge"
-        "http://localhost:3001/health:JACK Router"
+        "http://localhost:5555/health:JACK Router"
         "http://localhost:1883:MQTT Broker"
     )
     
@@ -390,19 +390,19 @@ show_access_info() {
     echo -e "${GREEN}==================${NC}"
     echo -e ""
     echo -e "${BLUE}🌐 Web Interfaces:${NC}"
-    echo -e "   ${CYAN}Main Interface (HTTPS): https://localhost:3443${NC}"
-    echo -e "   ${CYAN}Main Interface (HTTP):  http://localhost:3001${NC}"
+    echo -e "   ${CYAN}Main Interface (HTTPS): https://localhost:5556${NC}"
+    echo -e "   ${CYAN}Main Interface (HTTP):  http://localhost:5555${NC}"
     echo -e ""
     echo -e "${BLUE}📡 API Endpoints:${NC}"
     echo -e "   ${CYAN}JACK Bridge API:  http://localhost:6666${NC}"
-    echo -e "   ${CYAN}Router API:       https://localhost:3443/api${NC}"
+    echo -e "   ${CYAN}Router API:       https://localhost:5556/api${NC}"
     echo -e ""
     echo -e "${BLUE}🦟 MQTT Broker:${NC}"
     echo -e "   ${CYAN}MQTT:             mqtt://localhost:1883${NC}"
     echo -e "   ${CYAN}WebSocket:        ws://localhost:9001${NC}"
     echo -e ""
     echo -e "${BLUE}🏠 Home Assistant Integration:${NC}"
-    echo -e "   ${CYAN}Iframe URL:       https://localhost:3443${NC}"
+    echo -e "   ${CYAN}Iframe URL:       https://localhost:5556${NC}"
     echo -e "   ${CYAN}MQTT Discovery:   mqtt://localhost:1883${NC}"
     echo -e ""
     echo -e "${BLUE}📋 Useful Commands:${NC}"
@@ -412,7 +412,7 @@ show_access_info() {
     echo -e "   ${CYAN}Status:           docker-compose ps${NC}"
     echo -e ""
     echo -e "${YELLOW}⚠️ Important Notes:${NC}"
-    echo -e "   • Visit https://localhost:3443 and accept the SSL certificate"
+    echo -e "   • Visit https://localhost:5556 and accept the SSL certificate"
     echo -e "   • For Home Assistant: Add the iframe URL to your dashboard"
     echo -e "   • Make sure JACK is running on your Windows host"
     echo -e ""
@@ -425,7 +425,7 @@ show_troubleshooting() {
         echo -e ""
         echo -e "${CYAN}If services failed to start:${NC}"
         echo -e "   • Check logs: ${YELLOW}docker-compose logs${NC}"
-        echo -e "   • Verify ports are free: ${YELLOW}netstat -an | grep ':3001\\|:6666\\|:1883'${NC}"
+        echo -e "   • Verify ports are free: ${YELLOW}netstat -an | grep ':5555\\|:6666\\|:1883'${NC}"
         echo -e "   • Restart Docker Desktop if needed"
         echo -e ""
         echo -e "${CYAN}If JACK Bridge can't connect:${NC}"
@@ -435,8 +435,8 @@ show_troubleshooting() {
         echo -e ""
         echo -e "${CYAN}If web interface doesn't load:${NC}"
         echo -e "   • Wait a few more minutes for initialization"
-        echo -e "   • Check if port 3443 is available"
-        echo -e "   • Try accessing HTTP version: http://localhost:3001"
+        echo -e "   • Check if port 5556 is available"
+        echo -e "   • Try accessing HTTP version: http://localhost:5555"
         echo -e ""
     fi
 }

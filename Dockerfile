@@ -24,7 +24,7 @@ RUN npm ci --only=production && npm cache clean --force
 FROM base AS development
 RUN npm ci && npm cache clean --force
 COPY . .
-EXPOSE 3001 3443 5173 9229
+EXPOSE 5555 5556 5173 9229
 CMD ["npm", "run", "dev"]
 
 # Build stage
@@ -70,9 +70,9 @@ USER nextjs
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3001/health || exit 1
+    CMD curl -f http://localhost:5555/health || exit 1
 
-EXPOSE 3001 3443
+EXPOSE 5555 5556
 
 # Use tini for proper signal handling
 ENTRYPOINT ["/sbin/tini", "--"]

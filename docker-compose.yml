@@ -1,25 +1,22 @@
 version: '3.8'
 
 services:
-  # Temporary JACK Bridge Service (Node.js)
+  # C++ JACK Bridge Service (replaces Node.js bridge)
   jack-bridge:
     build:
       context: ./jack-bridge
       dockerfile: Dockerfile
-    container_name: jack-bridge
+      target: runtime
+    container_name: jack-bridge-cpp
     restart: unless-stopped
     ports:
-      - '6666:6666' # HTTP API port
-      - '6667:6667' # WebSocket port
+      - '6666:6666'
+    environment:
+      - JACK_BRIDGE_API_PORT=6666
+      - JACK_TOOLS_PATH=C:/PROGRA~1/JACK2/tools
     volumes:
       - jack-state:/app/state
       - bridge-logs:/app/logs
-    environment:
-      - JACK_SERVER_HOST=host.docker.internal
-      - JACK_TOOLS_PATH=C:/PROGRA~1/JACK2/tools
-      - JACK_BRIDGE_API_PORT=6666
-      - JACK_BRIDGE_WS_PORT=6667
-      - LOG_LEVEL=INFO
     networks:
       - jack-network
     healthcheck:
@@ -27,9 +24,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
   # MQTT Broker (Mosquitto)
+  # MQTT Broker (Mosquitto) - Fixed version
   mosquitto:
     image: eclipse-mosquitto:2.0
     container_name: mosquitto
@@ -38,9 +36,10 @@ services:
       - '1883:1883'
       - '9001:9001'
     volumes:
-      - ./mosquitto/config:/mosquitto/config:ro
       - mosquitto-data:/mosquitto/data
       - mosquitto-logs:/mosquitto/log
+    # Use default no-auth config
+    command: mosquitto -c /mosquitto-no-auth.conf
     networks:
       - jack-network
     healthcheck:
@@ -69,8 +68,8 @@ services:
     container_name: jack-router
     restart: unless-stopped
     ports:
-      - '3001:3001' # HTTP port
-      - '3443:3443' # HTTPS port
+      - '5555:5555' # HTTP port
+      - '5556:5556' # HTTPS port
     volumes:
       - router-state:/app/state
       - router-ssl:/app/ssl
@@ -78,8 +77,8 @@ services:
     environment:
       # Server configuration
       - NODE_ENV=production
-      - PORT=3001
-      - HTTPS_PORT=3443
+      - PORT=5555
+      - HTTPS_PORT=5556
       - HOST=0.0.0.0
       - DEPLOYMENT_MODE=docker
 
@@ -100,7 +99,7 @@ services:
 
       # Home Assistant Integration
       - HA_INTEGRATION_ENABLED=true
-      - CORS_ORIGINS=https://localhost:3443,https://homeassistant.local:8123
+      - CORS_ORIGINS=https://localhost:5556,https://homeassistant.local:8123
       - CSP_FRAME_ANCESTORS=https://homeassistant.local:8123
 
       # Logging
@@ -127,7 +126,7 @@ services:
     networks:
       - jack-network
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:3001/health']
+      test: ['CMD', 'curl', '-f', 'http://localhost:5555/health']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -161,8 +160,8 @@ services:
       target: development
     container_name: jack-router-dev
     ports:
-      - '3001:3001'
-      - '3443:3443'
+      - '5555:5555'
+      - '5556:5556'
       - '5173:5173' # Vite dev server
       - '9229:9229' # Node.js debug port
     volumes:

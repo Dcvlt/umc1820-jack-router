@@ -1,15 +1,21 @@
-// services/jackService.js - HTTP client for Windows JACK Controller service
-const { exec } = require('child_process');
-const { promisify } = require('util');
+// services/jackService.js - Updated for Docker with C++ Bridge communication
 const axios = require('axios');
+const WebSocket = require('ws');
 const config = require('../config/environment');
-
-const execAsync = promisify(exec);
+const logger = require('../utils/logger');
 
 class JackService {
   constructor() {
+    this.bridgeHost = process.env.JACK_BRIDGE_HOST || 'jack-bridge';
+    this.bridgePort = process.env.JACK_BRIDGE_PORT || 6666;
+    this.bridgeWsPort = process.env.JACK_BRIDGE_WS_PORT || 6667;
+    this.bridgeBaseUrl = `http://${this.bridgeHost}:${this.bridgePort}`;
+
     this.statusCache = { running: false, lastCheck: 0 };
     this.initializationComplete = false;
+    this.websocket = null;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 10;
 
     this.config = {
       timeouts: {
@@ -17,91 +23,180 @@ class JackService {
         status: 5000,
       },
       statusCacheMs: config.JACK_STATUS_CACHE_TTL || 5000,
-      jackController: {
-        host: 'localhost',
-        port: 6666,
-        baseUrl: 'http://localhost:6666',
-      },
-      commands: {
-        lsp: '/mnt/c/PROGRA~1/JACK2/tools/jack_lsp.exe',
-        connect: '/mnt/c/PROGRA~1/JACK2/tools/jack_connect.exe',
-      },
+      reconnectInterval: 5000,
     };
 
-    // Configure axios defaults
+    // Configure axios client for bridge communication
     this.httpClient = axios.create({
-      baseURL: this.config.jackController.baseUrl,
-      timeout: 5000,
+      baseURL: this.bridgeBaseUrl,
+      timeout: this.config.timeouts.default,
       headers: {
         'Content-Type': 'application/json',
       },
     });
+
+    // Setup axios interceptors for error handling
+    this.setupHttpInterceptors();
+  }
+
+  setupHttpInterceptors() {
+    this.httpClient.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error.code === 'ECONNREFUSED') {
+          logger.warn('🔌 JACK Bridge service not available, retrying...');
+        } else {
+          logger.error('❌ JACK Bridge communication error:', error.message);
+        }
+        throw error;
+      }
+    );
   }
 
   async initialize() {
-    console.log('🎛️ Initializing JACK service with Windows HTTP controller...');
-    console.log(`   Controller URL: ${this.config.jackController.baseUrl}`);
-    console.log(`   Fallback Tools: ${this.config.commands.lsp}`);
+    logger.info('🎛️ Initializing JACK service with Docker Bridge...');
+    logger.info(`   Bridge URL: ${this.bridgeBaseUrl}`);
+    logger.info(
+      `   WebSocket URL: ws://${this.bridgeHost}:${this.bridgeWsPort}`
+    );
 
-    // Check if JACK Controller service is running
+    // Wait for bridge service to be available
+    await this.waitForBridgeService();
+
+    // Setup WebSocket connection for real-time updates
+    this.setupWebSocketConnection();
+
+    // Initial status check
     try {
-      const response = await this.httpClient.get('/status');
-      if (response.data.success && response.data.connected) {
-        console.log('✅ JACK Controller service is running and connected');
-        this.statusCache = { running: true, lastCheck: Date.now() };
+      const status = await this.checkStatus();
+      if (status) {
+        logger.info('✅ JACK Bridge service connected and JACK is running');
       } else {
-        console.log(
-          '⚠️ JACK Controller service running but JACK not connected'
+        logger.warn(
+          '⚠️ JACK Bridge service connected but JACK server is not running'
         );
       }
     } catch (error) {
-      console.log(
-        '❌ JACK Controller service not available, using fallback methods'
-      );
-      console.log('   Start the jack_controller.exe service first!');
+      logger.error('❌ Failed to check initial JACK status:', error.message);
+    }
+  }
+
+  async waitForBridgeService(maxAttempts = 30, interval = 2000) {
+    logger.info('⏳ Waiting for JACK Bridge service to be available...');
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await this.httpClient.get('/health');
+        if (response.status === 200) {
+          logger.info(`✅ JACK Bridge service available (attempt ${attempt})`);
+          return true;
+        }
+      } catch (error) {
+        if (attempt === maxAttempts) {
+          throw new Error(
+            `JACK Bridge service not available after ${maxAttempts} attempts`
+          );
+        }
+
+        if (attempt % 5 === 0) {
+          logger.info(
+            `⏳ Still waiting for JACK Bridge service... (attempt ${attempt}/${maxAttempts})`
+          );
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, interval));
+      }
+    }
+
+    return false;
+  }
+
+  setupWebSocketConnection() {
+    const wsUrl = `ws://${this.bridgeHost}:${this.bridgeWsPort}`;
+    logger.info(`🔄 Setting up WebSocket connection to ${wsUrl}`);
+
+    try {
+      this.websocket = new WebSocket(wsUrl);
+
+      this.websocket.on('open', () => {
+        logger.info('✅ WebSocket connection established');
+        this.reconnectAttempts = 0;
+      });
+
+      this.websocket.on('message', (data) => {
+        try {
+          const message = JSON.parse(data);
+          this.handleWebSocketMessage(message);
+        } catch (error) {
+          logger.error('❌ Failed to parse WebSocket message:', error.message);
+        }
+      });
+
+      this.websocket.on('close', (code, reason) => {
+        logger.warn(
+          `🔌 WebSocket connection closed (code: ${code}, reason: ${reason})`
+        );
+        this.scheduleWebSocketReconnect();
+      });
+
+      this.websocket.on('error', (error) => {
+        logger.error('❌ WebSocket error:', error.message);
+        this.scheduleWebSocketReconnect();
+      });
+    } catch (error) {
+      logger.error('❌ Failed to setup WebSocket connection:', error.message);
+      this.scheduleWebSocketReconnect();
+    }
+  }
+
+  scheduleWebSocketReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      logger.error('❌ Maximum WebSocket reconnection attempts reached');
+      return;
+    }
+
+    this.reconnectAttempts++;
+    const delay = Math.min(
+      this.config.reconnectInterval * this.reconnectAttempts,
+      30000
+    );
+
+    logger.info(
+      `🔄 Scheduling WebSocket reconnection in ${delay}ms (attempt ${this.reconnectAttempts})`
+    );
+
+    setTimeout(() => {
+      this.setupWebSocketConnection();
+    }, delay);
+  }
+
+  handleWebSocketMessage(message) {
+    switch (message.type) {
+      case 'status_update':
+        this.statusCache = {
+          running: message.data.jack_running,
+          lastCheck: Date.now(),
+        };
+        logger.debug('📊 Received JACK status update:', message.data);
+        break;
+
+      case 'connection_change':
+        logger.debug('🔗 Received connection change:', message.data);
+        // Emit event for other services to listen to
+        this.emit('connectionChange', message.data);
+        break;
+
+      case 'error':
+        logger.error('❌ Bridge service error:', message.data);
+        break;
+
+      default:
+        logger.debug('📨 Unknown WebSocket message type:', message.type);
     }
   }
 
   setInitializationComplete() {
     this.initializationComplete = true;
-  }
-
-  async executeCommand(command, timeout = null) {
-    try {
-      const actualTimeout = timeout || this.config.timeouts.default;
-
-      const { stdout, stderr } = await execAsync(command, {
-        timeout: actualTimeout,
-        shell: '/bin/bash',
-        killSignal: 'SIGKILL',
-      });
-
-      if (
-        stderr &&
-        stderr.includes('Client name') &&
-        stderr.includes('conflits')
-      ) {
-        console.log(`ℹ️ JACK client name conflict (continuing anyway)`);
-        return stdout.trim();
-      }
-
-      if (stderr && !stderr.includes('Warning')) {
-        throw new Error(stderr);
-      }
-      return stdout.trim();
-    } catch (error) {
-      if (
-        error.stderr &&
-        error.stderr.includes('Client name') &&
-        error.stdout
-      ) {
-        console.log(`ℹ️ JACK client name conflict but got data anyway`);
-        return error.stdout.trim();
-      }
-
-      console.error(`Command failed: ${command}`, error.message);
-      throw error;
-    }
   }
 
   async checkStatus() {
@@ -111,71 +206,54 @@ class JackService {
     }
 
     try {
-      // Try HTTP controller first
       const response = await this.httpClient.get('/status');
-      if (response.data.success && response.data.connected) {
-        this.statusCache = { running: true, lastCheck: now };
-        return true;
-      }
-    } catch (error) {
-      // Fallback to command line check
-      try {
-        const command = `'${this.config.commands.lsp}'`;
-        await this.executeCommand(command, this.config.timeouts.status);
-        this.statusCache = { running: true, lastCheck: now };
-        return true;
-      } catch (cmdError) {
-        if (
-          cmdError.message.includes('Client name') &&
-          cmdError.message.includes('conflits')
-        ) {
-          console.log(`ℹ️ JACK running (client name conflict ignored)`);
-          this.statusCache = { running: true, lastCheck: now };
-          return true;
-        }
-      }
-    }
+      const data = response.data;
 
-    console.log(`🔍 JACK status check failed`);
-    this.statusCache = { running: false, lastCheck: now };
-    return false;
+      this.statusCache = {
+        running: data.jack_running || false,
+        lastCheck: now,
+      };
+
+      return this.statusCache.running;
+    } catch (error) {
+      logger.error('❌ JACK status check failed:', error.message);
+      this.statusCache = { running: false, lastCheck: now };
+      return false;
+    }
   }
 
   async listConnections() {
     try {
-      // Try HTTP controller first
       const response = await this.httpClient.get('/connections');
+
       if (response.data.success) {
-        // Convert HTTP response format to lsp format for compatibility
         return this.convertConnectionsToLspFormat(response.data.connections);
+      } else {
+        throw new Error(response.data.error || 'Failed to list connections');
       }
     } catch (error) {
-      console.log('ℹ️ HTTP controller unavailable, using fallback');
+      logger.error('❌ Failed to list connections:', error.message);
+      throw error;
     }
-
-    // Fallback to command line
-    const command = `'${this.config.commands.lsp}' -c`;
-    return await this.executeCommand(command);
   }
 
   async listPorts() {
     try {
-      // Try HTTP controller first
       const response = await this.httpClient.get('/ports');
+
       if (response.data.success) {
         return response.data.ports.join('\n');
+      } else {
+        throw new Error(response.data.error || 'Failed to list ports');
       }
     } catch (error) {
-      console.log('ℹ️ HTTP controller unavailable, using fallback');
+      logger.error('❌ Failed to list ports:', error.message);
+      throw error;
     }
-
-    // Fallback to command line
-    const command = `'${this.config.commands.lsp}'`;
-    return await this.executeCommand(command);
   }
 
   convertConnectionsToLspFormat(connections) {
-    // Convert [{from: "a", to: "b"}] to lsp -c format
+    // Convert [{from: "a", to: "b"}] to lsp -c format for compatibility
     const portMap = new Map();
 
     connections.forEach((conn) => {
@@ -226,101 +304,70 @@ class JackService {
 
   async connectPorts(sourcePort, destinationPort) {
     try {
-      // Try HTTP controller first
+      logger.info(`🔗 Connecting: ${sourcePort} -> ${destinationPort}`);
+
       const response = await this.httpClient.post('/connect', {
         source: sourcePort,
         destination: destinationPort,
       });
 
       if (response.data.success) {
-        console.log(
-          `✅ JACK Connected (HTTP): ${sourcePort} -> ${destinationPort}`
-        );
-        return response.data.method === 'already_connected'
+        logger.info(`✅ Connected: ${sourcePort} -> ${destinationPort}`);
+        return response.data.already_connected
           ? 'already connected'
           : 'connected';
+      } else {
+        throw new Error(response.data.error || 'Connection failed');
       }
     } catch (error) {
-      console.log(
-        `ℹ️ HTTP connect failed: ${error.message}, trying command line`
-      );
-    }
-
-    // Fallback to command line
-    const command = `'${this.config.commands.connect}' '${sourcePort}' '${destinationPort}'`;
-
-    try {
-      const result = await this.executeCommand(command);
-      console.log(
-        `✅ JACK Connected (CLI): ${sourcePort} -> ${destinationPort}`
-      );
-      return result;
-    } catch (error) {
-      const errorMsg = error.message.toLowerCase();
-      if (errorMsg.includes('already connected')) {
-        console.log(
-          `ℹ️ JACK Already connected: ${sourcePort} -> ${destinationPort}`
-        );
-        return 'already connected';
-      }
-
-      console.error(
-        `❌ JACK Connection failed: ${sourcePort} -> ${destinationPort} - ${error.message}`
+      logger.error(
+        `❌ Connection failed: ${sourcePort} -> ${destinationPort} - ${error.message}`
       );
       throw error;
     }
   }
 
-  /**
-   * NATIVE DISCONNECT using HTTP controller
-   */
   async disconnectPorts(sourcePort, destinationPort) {
-    console.log(
-      `🔌 Attempting to disconnect: ${sourcePort} -> ${destinationPort}`
-    );
-
     try {
-      // Try HTTP controller first
+      logger.info(`🔌 Disconnecting: ${sourcePort} -> ${destinationPort}`);
+
       const response = await this.httpClient.post('/disconnect', {
         source: sourcePort,
         destination: destinationPort,
       });
 
       if (response.data.success) {
-        console.log(
-          `✅ Disconnected (HTTP): ${sourcePort} -> ${destinationPort}`
-        );
-        return { method: 'jack_disconnect_http', success: true };
+        logger.info(`✅ Disconnected: ${sourcePort} -> ${destinationPort}`);
+        return { method: 'bridge_api', success: true };
       } else {
-        throw new Error(`HTTP disconnect failed: ${response.data.error}`);
+        throw new Error(response.data.error || 'Disconnect failed');
       }
     } catch (error) {
-      console.log(`❌ HTTP disconnect failed: ${error.message}`);
+      logger.error(
+        `❌ Disconnect failed: ${sourcePort} -> ${destinationPort} - ${error.message}`
+      );
       throw error;
     }
   }
 
-  /**
-   * NATIVE CLEAR ALL using HTTP controller
-   */
   async clearAllConnections() {
-    console.log(`🧹 Clearing all connections via HTTP controller...`);
-
     try {
+      logger.info('🧹 Clearing all connections via Bridge API...');
+
       const response = await this.httpClient.post('/clear');
 
       if (response.data.success) {
-        console.log(`✅ Cleared ${response.data.cleared} connections via HTTP`);
+        logger.info(`✅ Cleared ${response.data.cleared || 'all'} connections`);
         return {
-          method: 'jack_disconnect_http',
+          method: 'bridge_api',
           success: true,
-          cleared: response.data.cleared,
+          cleared: response.data.cleared || 0,
         };
       } else {
-        throw new Error(`HTTP clear failed: ${response.data.error}`);
+        throw new Error(response.data.error || 'Clear all failed');
       }
     } catch (error) {
-      console.log(`❌ HTTP clear failed: ${error.message}`);
+      logger.error(`❌ Clear all failed: ${error.message}`);
       throw error;
     }
   }
@@ -332,7 +379,7 @@ class JackService {
         (conn) => conn.from === sourcePort && conn.to === destinationPort
       );
     } catch (error) {
-      console.error(`❌ Error checking connection: ${error.message}`);
+      logger.error(`❌ Error checking connection: ${error.message}`);
       return false;
     }
   }
@@ -345,52 +392,47 @@ class JackService {
         incoming: connections.filter((conn) => conn.to === portName),
       };
     } catch (error) {
-      console.error(`❌ Error getting port connections: ${error.message}`);
+      logger.error(`❌ Error getting port connections: ${error.message}`);
       return { outgoing: [], incoming: [] };
     }
   }
 
   async disconnectAllFromPort(portName) {
     try {
-      console.log(`🔌 Disconnecting all connections for port: ${portName}`);
+      logger.info(`🔌 Disconnecting all connections for port: ${portName}`);
 
-      const connections = await this.getPortConnections(portName);
-      const allPortConnections = [
-        ...connections.outgoing,
-        ...connections.incoming,
-      ];
+      const response = await this.httpClient.post('/disconnect_port', {
+        port: portName,
+      });
 
-      if (allPortConnections.length === 0) {
-        console.log(`ℹ️ No connections found for port: ${portName}`);
-        return { disconnected: 0, method: 'none_found' };
+      if (response.data.success) {
+        const disconnected = response.data.disconnected || 0;
+        logger.info(
+          `✅ Disconnected ${disconnected} connections from ${portName}`
+        );
+        return {
+          disconnected,
+          method: 'bridge_api',
+          success: true,
+        };
+      } else {
+        throw new Error(
+          response.data.error || 'Disconnect all from port failed'
+        );
       }
-
-      console.log(
-        `🔄 Disconnecting ${allPortConnections.length} connections...`
-      );
-
-      let disconnected = 0;
-      for (const conn of allPortConnections) {
-        try {
-          await this.disconnectPorts(conn.from, conn.to);
-          disconnected++;
-        } catch (error) {
-          console.warn(`⚠️ Failed to disconnect: ${conn.from} -> ${conn.to}`);
-        }
-      }
-
-      console.log(
-        `✅ Disconnected ${disconnected}/${allPortConnections.length} connections from ${portName}`
-      );
-
-      return {
-        disconnected,
-        method: 'jack_disconnect_http',
-        total: allPortConnections.length,
-      };
     } catch (error) {
-      console.error(`❌ Error disconnecting all from port: ${error.message}`);
+      logger.error(`❌ Error disconnecting all from port: ${error.message}`);
       throw error;
+    }
+  }
+
+  // Health and status methods
+  async getBridgeHealth() {
+    try {
+      const response = await this.httpClient.get('/health');
+      return response.data;
+    } catch (error) {
+      return { healthy: false, error: error.message };
     }
   }
 
@@ -399,20 +441,148 @@ class JackService {
       initialized: this.initializationComplete,
       running: this.statusCache.running,
       lastCheck: this.statusCache.lastCheck,
-      config: this.config,
-      httpController: this.config.jackController,
+      bridgeConnected:
+        this.websocket && this.websocket.readyState === WebSocket.OPEN,
+      bridgeUrl: this.bridgeBaseUrl,
       features: {
         connect: true,
-        disconnect: 'jack_disconnect_http',
-        clearAll: 'jack_disconnect_http',
+        disconnect: true,
+        clearAll: true,
         list_ports: true,
         list_connections: true,
+        real_time_updates: true,
       },
       availableMethods: {
-        jack_disconnect_http: 'primary',
-        command_line: 'fallback',
+        bridge_api: 'primary',
+        websocket_updates: 'real-time',
       },
     };
+  }
+
+  // Event emitter functionality for WebSocket events
+  emit(event, data) {
+    // Simple event emission - could be enhanced with proper EventEmitter
+    if (this.eventHandlers && this.eventHandlers[event]) {
+      this.eventHandlers[event].forEach((handler) => {
+        try {
+          handler(data);
+        } catch (error) {
+          logger.error(`❌ Event handler error for ${event}:`, error.message);
+        }
+      });
+    }
+  }
+
+  on(event, handler) {
+    if (!this.eventHandlers) {
+      this.eventHandlers = {};
+    }
+    if (!this.eventHandlers[event]) {
+      this.eventHandlers[event] = [];
+    }
+    this.eventHandlers[event].push(handler);
+  }
+
+  off(event, handler) {
+    if (this.eventHandlers && this.eventHandlers[event]) {
+      const index = this.eventHandlers[event].indexOf(handler);
+      if (index > -1) {
+        this.eventHandlers[event].splice(index, 1);
+      }
+    }
+  }
+
+  // Cleanup method
+  async shutdown() {
+    logger.info('🛑 Shutting down JACK service...');
+
+    if (this.websocket) {
+      this.websocket.close();
+      this.websocket = null;
+    }
+
+    // Clear any timeouts or intervals
+    this.reconnectAttempts = this.maxReconnectAttempts;
+
+    logger.info('✅ JACK service shutdown complete');
+  }
+
+  // Bridge service specific methods
+  async getBridgeStatus() {
+    try {
+      const response = await this.httpClient.get('/status');
+      return response.data;
+    } catch (error) {
+      logger.error('❌ Failed to get bridge status:', error.message);
+      throw error;
+    }
+  }
+
+  async testBridgeConnection() {
+    try {
+      const response = await this.httpClient.get('/health');
+      return response.status === 200;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // Batch operations support
+  async executeBatchOperations(operations) {
+    try {
+      const response = await this.httpClient.post('/batch', {
+        operations: operations,
+      });
+
+      if (response.data.success) {
+        return response.data.results;
+      } else {
+        throw new Error(response.data.error || 'Batch operations failed');
+      }
+    } catch (error) {
+      logger.error('❌ Batch operations failed:', error.message);
+      throw error;
+    }
+  }
+
+  // Get detailed bridge information
+  async getBridgeInfo() {
+    try {
+      const response = await this.httpClient.get('/info');
+      return response.data;
+    } catch (error) {
+      logger.error('❌ Failed to get bridge info:', error.message);
+      return null;
+    }
+  }
+
+  // Monitor bridge connection health
+  startBridgeHealthMonitoring(interval = 30000) {
+    if (this.healthMonitorInterval) {
+      clearInterval(this.healthMonitorInterval);
+    }
+
+    this.healthMonitorInterval = setInterval(async () => {
+      try {
+        const isHealthy = await this.testBridgeConnection();
+        if (!isHealthy && this.statusCache.running) {
+          logger.warn('⚠️ Bridge connection lost, attempting to reconnect...');
+          this.scheduleWebSocketReconnect();
+        }
+      } catch (error) {
+        // Silent health check - don't spam logs
+      }
+    }, interval);
+
+    logger.info(`🏥 Bridge health monitoring started (${interval}ms interval)`);
+  }
+
+  stopBridgeHealthMonitoring() {
+    if (this.healthMonitorInterval) {
+      clearInterval(this.healthMonitorInterval);
+      this.healthMonitorInterval = null;
+      logger.info('🏥 Bridge health monitoring stopped');
+    }
   }
 }
 

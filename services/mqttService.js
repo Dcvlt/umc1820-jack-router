@@ -60,7 +60,7 @@ const MQTT_TOPICS = {
  */
 function initialize(config = {}) {
   const mqttConfig = getMQTTConfig();
-  
+
   if (!mqttConfig.enabled) {
     logger.info('📡 MQTT service disabled');
     return false;
@@ -76,7 +76,7 @@ function initialize(config = {}) {
 
   try {
     logger.info(`📡 Connecting to MQTT broker: ${mqttConfig.host}`);
-    
+
     mqttClient = mqtt.connect(mqttConfig.host, {
       username: mqttConfig.username,
       password: mqttConfig.password,
@@ -140,11 +140,11 @@ function setupEventHandlers() {
   });
 
   mqttClient.on('message', handleMQTTMessage);
-  
+
   mqttClient.on('error', (error) => {
     logger.error('📡 MQTT Error:', error);
   });
-  
+
   mqttClient.on('close', () => {
     logger.warn('📡 MQTT connection closed');
   });
@@ -163,7 +163,9 @@ function setupEventHandlers() {
  */
 function setupHomeAssistantDiscovery() {
   if (!deviceConfig.inputs || !deviceConfig.outputs) {
-    logger.warn('📡 Device configuration missing, skipping Home Assistant discovery');
+    logger.warn(
+      '📡 Device configuration missing, skipping Home Assistant discovery'
+    );
     return;
   }
 
@@ -173,31 +175,33 @@ function setupHomeAssistantDiscovery() {
     model: process.env.DEVICE_MODEL || 'Behringer UMC1820',
     manufacturer: process.env.DEVICE_MANUFACTURER || 'Custom',
     sw_version: process.env.npm_package_version || '1.0.0',
-    configuration_url: `http://${require('../utils/network').getLocalIP()}:${process.env.PORT || 3001}`,
+    configuration_url: `http://${require('../utils/network').getLocalIP()}:${process.env.PORT || 5555}`,
   };
 
   // Create connection matrix switches (input -> output combinations)
   Object.entries(deviceConfig.inputs).forEach(([inputKey, inputConfig]) => {
-    Object.entries(deviceConfig.outputs).forEach(([outputKey, outputConfig]) => {
-      const entityId = `${inputKey}_to_${outputKey}`;
+    Object.entries(deviceConfig.outputs).forEach(
+      ([outputKey, outputConfig]) => {
+        const entityId = `${inputKey}_to_${outputKey}`;
 
-      const switchConfig = {
-        name: `${inputConfig.label} → ${outputConfig.label}`,
-        unique_id: `jack_audio_connection_${entityId}`,
-        state_topic: `${MQTT_TOPICS.device.base}/connection/${entityId}/state`,
-        command_topic: `${MQTT_TOPICS.device.base}/connection/${entityId}/set`,
-        payload_on: 'ON',
-        payload_off: 'OFF',
-        state_on: 'ON',
-        state_off: 'OFF',
-        device: deviceInfo,
-        icon: 'mdi:cable-data',
-        entity_category: 'config',
-      };
+        const switchConfig = {
+          name: `${inputConfig.label} → ${outputConfig.label}`,
+          unique_id: `jack_audio_connection_${entityId}`,
+          state_topic: `${MQTT_TOPICS.device.base}/connection/${entityId}/state`,
+          command_topic: `${MQTT_TOPICS.device.base}/connection/${entityId}/set`,
+          payload_on: 'ON',
+          payload_off: 'OFF',
+          state_on: 'ON',
+          state_off: 'OFF',
+          device: deviceInfo,
+          icon: 'mdi:cable-data',
+          entity_category: 'config',
+        };
 
-      const discoveryTopic = `${MQTT_TOPICS.discovery.switch}/${entityId}/config`;
-      publishDiscovery(discoveryTopic, switchConfig);
-    });
+        const discoveryTopic = `${MQTT_TOPICS.discovery.switch}/${entityId}/config`;
+        publishDiscovery(discoveryTopic, switchConfig);
+      }
+    );
   });
 
   // Create preset buttons
@@ -339,7 +343,9 @@ async function handleConnectionSwitch(connectionId, payload) {
     } else {
       await connectionService.disconnectPorts(fromPort, toPort);
       connectionMatrix[connectionId] = false;
-      logger.info(`📡 Disconnected: ${inputConfig.label} → ${outputConfig.label}`);
+      logger.info(
+        `📡 Disconnected: ${inputConfig.label} → ${outputConfig.label}`
+      );
     }
 
     // Publish state back to Home Assistant
@@ -348,7 +354,10 @@ async function handleConnectionSwitch(connectionId, payload) {
   } catch (error) {
     logger.error(`📡 Error handling connection switch: ${error.message}`);
     // Publish error state
-    publishConnectionState(connectionId, connectionMatrix[connectionId] ? 'ON' : 'OFF');
+    publishConnectionState(
+      connectionId,
+      connectionMatrix[connectionId] ? 'ON' : 'OFF'
+    );
   }
 }
 
@@ -372,7 +381,9 @@ async function handlePresetCommand(payload) {
   const results = [];
 
   for (const connection of presetConfig.connections) {
-    const fromConfig = deviceConfig.inputs[connection.from] || deviceConfig.outputs[connection.from];
+    const fromConfig =
+      deviceConfig.inputs[connection.from] ||
+      deviceConfig.outputs[connection.from];
     const toConfig = deviceConfig.outputs[connection.to];
 
     const fromPort = fromConfig?.value;
@@ -485,19 +496,24 @@ function updateConnectionMatrix(connections) {
   connectionMatrix = {};
 
   // Build matrix from current connections
-  Object.entries(deviceConfig.inputs || {}).forEach(([inputKey, inputConfig]) => {
-    Object.entries(deviceConfig.outputs || {}).forEach(([outputKey, outputConfig]) => {
-      const connectionId = `${inputKey}_to_${outputKey}`;
+  Object.entries(deviceConfig.inputs || {}).forEach(
+    ([inputKey, inputConfig]) => {
+      Object.entries(deviceConfig.outputs || {}).forEach(
+        ([outputKey, outputConfig]) => {
+          const connectionId = `${inputKey}_to_${outputKey}`;
 
-      // Check if this connection exists
-      const isConnected = connections.some(
-        (conn) => conn.from === inputConfig.value && conn.to === outputConfig.value
+          // Check if this connection exists
+          const isConnected = connections.some(
+            (conn) =>
+              conn.from === inputConfig.value && conn.to === outputConfig.value
+          );
+
+          connectionMatrix[connectionId] = isConnected;
+          publishConnectionState(connectionId, isConnected ? 'ON' : 'OFF');
+        }
       );
-
-      connectionMatrix[connectionId] = isConnected;
-      publishConnectionState(connectionId, isConnected ? 'ON' : 'OFF');
-    });
-  });
+    }
+  );
 }
 
 /**
@@ -506,13 +522,18 @@ function updateConnectionMatrix(connections) {
 function publishDiscovery(topic, config) {
   if (!mqttClient || !mqttClient.connected) return;
 
-  mqttClient.publish(topic, JSON.stringify(config), { retain: true }, (error) => {
-    if (error) {
-      logger.error(`📡 Failed to publish discovery for ${topic}:`, error);
-    } else {
-      logger.debug(`📡 Published discovery: ${topic}`);
+  mqttClient.publish(
+    topic,
+    JSON.stringify(config),
+    { retain: true },
+    (error) => {
+      if (error) {
+        logger.error(`📡 Failed to publish discovery for ${topic}:`, error);
+      } else {
+        logger.debug(`📡 Published discovery: ${topic}`);
+      }
     }
-  });
+  );
 }
 
 function publishConnectionState(connectionId, state) {
@@ -536,7 +557,7 @@ async function publishStatus() {
 
   try {
     const jackRunning = await jackService.checkStatus();
-    
+
     if (jackRunning) {
       const connectionOutput = await jackService.listConnections();
       const parsedConnections = parseJackConnections(connectionOutput);
@@ -553,8 +574,12 @@ async function publishStatus() {
         device_config: deviceConfig,
       };
 
-      mqttClient.publish(MQTT_TOPICS.device.status, JSON.stringify(status), { qos: 1 });
-      mqttClient.publish(MQTT_TOPICS.status, JSON.stringify(status), { qos: 1 }); // Legacy
+      mqttClient.publish(MQTT_TOPICS.device.status, JSON.stringify(status), {
+        qos: 1,
+      });
+      mqttClient.publish(MQTT_TOPICS.status, JSON.stringify(status), {
+        qos: 1,
+      }); // Legacy
     } else {
       const errorStatus = {
         timestamp: new Date().toISOString(),
@@ -562,8 +587,14 @@ async function publishStatus() {
         error: 'JACK server not running',
       };
 
-      mqttClient.publish(MQTT_TOPICS.device.status, JSON.stringify(errorStatus), { qos: 1 });
-      mqttClient.publish(MQTT_TOPICS.status, JSON.stringify(errorStatus), { qos: 1 }); // Legacy
+      mqttClient.publish(
+        MQTT_TOPICS.device.status,
+        JSON.stringify(errorStatus),
+        { qos: 1 }
+      );
+      mqttClient.publish(MQTT_TOPICS.status, JSON.stringify(errorStatus), {
+        qos: 1,
+      }); // Legacy
     }
   } catch (error) {
     logger.error('📡 Error publishing status:', error);
@@ -581,8 +612,12 @@ function publishPresetApplied(preset, results) {
     results,
   };
 
-  mqttClient.publish(MQTT_TOPICS.device.connections, JSON.stringify(message), { qos: 1 });
-  mqttClient.publish(MQTT_TOPICS.connections, JSON.stringify(message), { qos: 1 }); // Legacy
+  mqttClient.publish(MQTT_TOPICS.device.connections, JSON.stringify(message), {
+    qos: 1,
+  });
+  mqttClient.publish(MQTT_TOPICS.connections, JSON.stringify(message), {
+    qos: 1,
+  }); // Legacy
 }
 
 function publishConnectionChange(action, data) {
@@ -594,8 +629,12 @@ function publishConnectionChange(action, data) {
     ...data,
   };
 
-  mqttClient.publish(MQTT_TOPICS.device.connections, JSON.stringify(message), { qos: 1 });
-  mqttClient.publish(MQTT_TOPICS.connections, JSON.stringify(message), { qos: 1 }); // Legacy
+  mqttClient.publish(MQTT_TOPICS.device.connections, JSON.stringify(message), {
+    qos: 1,
+  });
+  mqttClient.publish(MQTT_TOPICS.connections, JSON.stringify(message), {
+    qos: 1,
+  }); // Legacy
 }
 
 function publishPresets() {
@@ -606,7 +645,9 @@ function publishPresets() {
     presets: routingPresets,
   };
 
-  mqttClient.publish(MQTT_TOPICS.device.status, JSON.stringify(message), { qos: 1 });
+  mqttClient.publish(MQTT_TOPICS.device.status, JSON.stringify(message), {
+    qos: 1,
+  });
 }
 
 function publishDeviceConfig() {
@@ -617,7 +658,9 @@ function publishDeviceConfig() {
     device_config: deviceConfig,
   };
 
-  mqttClient.publish(MQTT_TOPICS.device.status, JSON.stringify(message), { qos: 1 });
+  mqttClient.publish(MQTT_TOPICS.device.status, JSON.stringify(message), {
+    qos: 1,
+  });
 }
 
 function publishError(errorMessage) {
@@ -628,7 +671,9 @@ function publishError(errorMessage) {
     error: errorMessage,
   };
 
-  mqttClient.publish(MQTT_TOPICS.device.status, JSON.stringify(message), { qos: 1 });
+  mqttClient.publish(MQTT_TOPICS.device.status, JSON.stringify(message), {
+    qos: 1,
+  });
 }
 
 /**

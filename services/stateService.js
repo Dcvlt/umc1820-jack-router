@@ -1,16 +1,40 @@
-// services/stateService.js
+// services/stateService.js - Fixed version
 const fs = require('fs').promises;
+const path = require('path');
 const config = require('../config');
 const jackService = require('./jackService');
 const connectionService = require('./connectionService');
-const { DEVICE_CONFIG, ROUTING_PRESETS } = require('../constants/constants.cjs');
+const {
+  DEVICE_CONFIG,
+  ROUTING_PRESETS,
+} = require('../constants/constants.cjs');
+const logger = require('../utils/logger');
 
 class StateService {
   constructor() {
-    this.stateFile = config.paths.state.main;
-    this.backupFile = config.paths.state.backup;
+    // Use environment variables with fallbacks
+    this.stateFile = path.join(
+      process.cwd(),
+      'state',
+      'audio_router_state.json'
+    );
+    this.backupFile = path.join(
+      process.cwd(),
+      'state',
+      'audio_router_state.backup.json'
+    );
     this.isStartingUp = true;
     this.autoSaveInterval = null;
+
+    // Configuration with fallbacks
+    this.config = {
+      autoSaveInterval: parseInt(
+        process.env.STATE_AUTO_SAVE_INTERVAL || '30000',
+        10
+      ),
+      connectionRebuildDelay: 2000,
+      backupEnabled: process.env.STATE_BACKUP_ENABLED !== 'false',
+    };
   }
 
   /**
@@ -19,7 +43,7 @@ class StateService {
   async saveState() {
     try {
       if (!(await jackService.checkStatus())) {
-        console.log('⚠️ JACK not running, skipping state save');
+        logger.warn('⚠️ JACK not running, skipping state save');
         return false;
       }
 
@@ -36,17 +60,22 @@ class StateService {
       };
 
       // Create backup of existing state
-      try {
-        await fs.copyFile(this.stateFile, this.backupFile);
-      } catch (error) {
-        // Backup file might not exist yet
+      if (this.config.backupEnabled) {
+        try {
+          await fs.copyFile(this.stateFile, this.backupFile);
+        } catch (error) {
+          // Backup file might not exist yet
+        }
       }
 
+      // Ensure state directory exists
+      await fs.mkdir(path.dirname(this.stateFile), { recursive: true });
+
       await fs.writeFile(this.stateFile, JSON.stringify(currentState, null, 2));
-      console.log('💾 Audio router state saved');
+      logger.info('💾 Audio router state saved');
       return true;
     } catch (error) {
-      console.error('❌ Failed to save state:', error.message);
+      logger.error('❌ Failed to save state:', error.message);
       return false;
     }
   }
@@ -56,22 +85,26 @@ class StateService {
    */
   async loadState() {
     try {
-      console.log('🔄 Loading previous state...');
+      logger.info('🔄 Loading previous state...');
 
       if (!(await jackService.checkStatus())) {
-        console.log('⚠️ JACK not running, cannot restore state');
+        logger.warn('⚠️ JACK not running, cannot restore state');
         return false;
       }
 
       const stateData = await fs.readFile(this.stateFile, 'utf8');
       const savedState = JSON.parse(stateData);
 
-      console.log(`📅 Found state from ${savedState.timestamp}`);
-      console.log(`📊 State contains ${savedState.connections.length} connections`);
+      logger.info(`📅 Found state from ${savedState.timestamp}`);
+      logger.info(
+        `📊 State contains ${savedState.connections.length} connections`
+      );
 
       // Clear existing connections
       await connectionService.clearAllConnections();
-      await new Promise((resolve) => setTimeout(resolve, config.app.connectionRebuildDelay));
+      await new Promise((resolve) =>
+        setTimeout(resolve, this.config.connectionRebuildDelay)
+      );
 
       let restored = 0;
       let failed = 0;
@@ -82,20 +115,20 @@ class StateService {
           await connectionService.connectPorts(connection.from, connection.to);
           restored++;
         } catch (error) {
-          console.error(
+          logger.error(
             `❌ Failed to restore connection ${connection.from} -> ${connection.to}: ${error.message}`
           );
           failed++;
         }
       }
 
-      console.log(`✅ Restored ${restored} connections, ${failed} failed`);
+      logger.info(`✅ Restored ${restored} connections, ${failed} failed`);
       return true;
     } catch (error) {
       if (error.code === 'ENOENT') {
-        console.log('ℹ️ No previous state file found');
+        logger.info('ℹ️ No previous state file found');
       } else {
-        console.error('❌ Failed to load state:', error.message);
+        logger.error('❌ Failed to load state:', error.message);
       }
       return false;
     }
@@ -118,24 +151,28 @@ class StateService {
    */
   startAutoSave() {
     this.stopAutoSave(); // Clear any existing interval
-    
-    this.autoSaveInterval = setInterval(async () => {
+
+    logger.info(
+      `🔄 Starting auto-save (every ${this.config.autoSaveInterval / 1000}s)`
+    );
+
+    this.autoSaveIntervalId = setInterval(async () => {
       if (!this.isStartingUp) {
         await this.saveState();
       }
-    }, config.app.autoSaveInterval);
+    }, this.config.autoSaveInterval);
 
-    console.log(`🔄 Auto-save started (every ${config.app.autoSaveInterval / 1000}s)`);
+    logger.info(`✅ Auto-save started`);
   }
 
   /**
    * Stop auto-save functionality
    */
   stopAutoSave() {
-    if (this.autoSaveInterval) {
-      clearInterval(this.autoSaveInterval);
-      this.autoSaveInterval = null;
-      console.log('🔄 Auto-save stopped');
+    if (this.autoSaveIntervalId) {
+      clearInterval(this.autoSaveIntervalId);
+      this.autoSaveIntervalId = null;
+      logger.info('🔄 Auto-save stopped');
     }
   }
 
@@ -144,6 +181,7 @@ class StateService {
    */
   setStartingUp(isStartingUp) {
     this.isStartingUp = isStartingUp;
+    logger.info(`🚀 Startup phase: ${isStartingUp ? 'active' : 'complete'}`);
   }
 
   /**
@@ -151,6 +189,20 @@ class StateService {
    */
   getStartingUp() {
     return this.isStartingUp;
+  }
+
+  /**
+   * Check if auto-save is enabled
+   */
+  isAutoSaveEnabled() {
+    return this.autoSaveIntervalId !== null;
+  }
+
+  /**
+   * Get configuration
+   */
+  getConfig() {
+    return this.config;
   }
 }
 

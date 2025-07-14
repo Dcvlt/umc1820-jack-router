@@ -131,8 +131,8 @@ services:
     container_name: jack-router-prod
     restart: always
     ports:
-      - '3001:3001'
-      - '3443:3443'
+      - '5555:5555'
+      - '5556:5556'
     volumes:
       - router-state-prod:/app/state
       - router-ssl-prod:/app/ssl
@@ -141,8 +141,8 @@ services:
     environment:
       # Server configuration
       - NODE_ENV=production
-      - PORT=3001
-      - HTTPS_PORT=3443
+      - PORT=5555
+      - HTTPS_PORT=5556
       - HOST=0.0.0.0
 
       # JACK Bridge connection
@@ -208,7 +208,7 @@ services:
           memory: 256M
           cpus: '0.5'
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:3001/health']
+      test: ['CMD', 'curl', '-f', 'http://localhost:5555/health']
       interval: 30s
       timeout: 10s
       retries: 3
