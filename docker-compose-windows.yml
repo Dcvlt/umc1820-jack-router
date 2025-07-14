@@ -43,7 +43,10 @@ services:
       resources:
         limits:
           memory: 2G
-          cpus:
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
 
   # MQTT Broker (Linux container)
   mosquitto:
@@ -56,7 +59,7 @@ services:
     volumes:
       - mosquitto-data:/mosquitto/data
       - mosquitto-logs:/mosquitto/log
-      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       - jack-network
     healthcheck:
@@ -107,7 +110,7 @@ services:
       # MQTT configuration
       - MQTT_ENABLED=true
       - MQTT_HOST=mqtt://mosquitto:1883
-      - MQTT_CLIENT_ID=jack-audio-router-docker
+      - MQTT_CLIENT_ID=jack-audio-router-windows
 
       # SSL Configuration (REQUIRED for Home Assistant)
       - SSL_ENABLED=true
@@ -123,6 +126,7 @@ services:
       - LOG_LEVEL=INFO
       - LOG_COLORS=false
       - LOG_FILE_ENABLED=true
+      - LOG_FILE_PATH=/app/logs/jack-router.log
 
       # Features
       - FEATURE_SSL_ENABLED=true
@@ -146,17 +150,42 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
+
+  # Redis (Optional - for caching)
+  redis:
+    profiles: ['cache']
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    networks:
+      - jack-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 networks:
   jack-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
 volumes:
+  # Windows container volumes
   jack-bridge-state:
     driver: local
   jack-bridge-logs:
     driver: local
+
+  # Linux container volumes
   router-state:
     driver: local
   router-ssl:
@@ -166,4 +195,6 @@ volumes:
   mosquitto-data:
     driver: local
   mosquitto-logs:
+    driver: local
+  redis-data:
     driver: local

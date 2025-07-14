@@ -1,0 +1,48 @@
+# Dockerfile.windows - Fixed with correct file paths
+# escape=`
+
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+WORKDIR C:\jack-bridge
+
+# Install Chocolatey and tools
+RUN [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1')); choco install -y --no-progress vcredist2019 curl 7zip cmake git
+
+# Install Visual Studio Build Tools
+RUN Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vs_buildtools.exe' -OutFile 'vs_buildtools.exe'; Start-Process -FilePath 'vs_buildtools.exe' -ArgumentList '--quiet', '--wait', '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--add', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' -Wait; Remove-Item 'vs_buildtools.exe'
+
+# Install JACK2
+RUN Invoke-WebRequest -Uri 'https://github.com/jackaudio/jack2-releases/releases/download/v1.9.22/jack2-win64-v1.9.22.exe' -OutFile 'jack2-installer.exe'; Start-Process -FilePath 'jack2-installer.exe' -ArgumentList '/S' -Wait; Remove-Item 'jack2-installer.exe'
+
+# Copy only the files that exist
+COPY src/ ./src/
+COPY CMakeLists.txt ./CMakeLists.txt
+COPY startup.ps1 ./startup.ps1
+COPY healthcheck.ps1 ./healthcheck.ps1
+
+# Create directories
+RUN New-Item -ItemType Directory -Force -Path logs, state
+
+# Build project
+RUN cmd /c '"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && mkdir build && cd build && cmake .. -G "Visual Studio 17 2022" -A x64 && cmake --build . --config Release --parallel'
+
+# Copy executable
+RUN if (Test-Path 'build\Release\jack-bridge-windows.exe') { Copy-Item 'build\Release\jack-bridge-windows.exe' 'jack-bridge.exe'; Write-Host 'Build successful' } else { Write-Host 'Build failed'; exit 1 }
+
+# Environment variables
+ENV PATH="C:\Program Files\JACK2\tools;${PATH}"
+ENV JACK_TOOLS_PATH="C:\Program Files\JACK2\tools"
+ENV JACK_BRIDGE_API_PORT=6666
+ENV JACK_SAMPLE_RATE=48000
+ENV JACK_BUFFER_SIZE=128
+
+# Expose port
+EXPOSE 6666
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 CMD powershell -File C:\jack-bridge\healthcheck.ps1
+
+# Start command
+CMD ["powershell", "-File", "C:\\jack-bridge\\startup.ps1"]

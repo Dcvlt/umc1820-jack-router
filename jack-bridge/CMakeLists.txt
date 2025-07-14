@@ -1,81 +1,83 @@
-# CMakeLists.txt for JACK Bridge Service - Simplified Working Version
 cmake_minimum_required(VERSION 3.16)
-project(jack-bridge VERSION 1.0.0 LANGUAGES CXX)
+project(jack-bridge-windows VERSION 1.0.0 LANGUAGES CXX)
 
-# Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Build type
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+# Find JACK2 installation with fallback paths
+set(JACK_POSSIBLE_ROOTS 
+    "C:/Program Files/JACK2"
+    "C:/Program Files (x86)/JACK2"
+    "C:/JACK2"
+)
+
+foreach(JACK_ROOT_CANDIDATE ${JACK_POSSIBLE_ROOTS})
+    if(EXISTS "${JACK_ROOT_CANDIDATE}")
+        set(JACK_ROOT "${JACK_ROOT_CANDIDATE}")
+        break()
+    endif()
+endforeach()
+
+if(NOT JACK_ROOT)
+    message(FATAL_ERROR "JACK2 installation not found in standard locations")
 endif()
 
-# Compiler flags
-set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra -DDEBUG")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+message(STATUS "Using JACK2 from: ${JACK_ROOT}")
 
-# Find required packages
-find_package(Threads REQUIRED)
-
-# Source files (single file approach)
-set(SOURCES
-    src/main.cpp
+# Find headers and library
+find_path(JACK_INCLUDE_DIR 
+    NAMES jack/jack.h
+    PATHS "${JACK_ROOT}/includes" "${JACK_ROOT}/include"
+    NO_DEFAULT_PATH
 )
+
+find_library(JACK_LIBRARY 
+    NAMES libjack64 libjack jack
+    PATHS "${JACK_ROOT}/lib" "${JACK_ROOT}/lib64"
+    NO_DEFAULT_PATH
+)
+
+if(NOT JACK_INCLUDE_DIR)
+    message(FATAL_ERROR "JACK headers not found. Searched in: ${JACK_ROOT}/includes, ${JACK_ROOT}/include")
+endif()
+
+if(NOT JACK_LIBRARY)
+    message(FATAL_ERROR "JACK library not found. Searched in: ${JACK_ROOT}/lib, ${JACK_ROOT}/lib64")
+endif()
+
+message(STATUS "JACK Include Dir: ${JACK_INCLUDE_DIR}")
+message(STATUS "JACK Library: ${JACK_LIBRARY}")
+
+# Source files
+set(SOURCES src/main-windows.cpp)
 
 # Create executable
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# Include directories
+target_include_directories(${PROJECT_NAME} PRIVATE ${JACK_INCLUDE_DIR})
+
 # Link libraries
-target_link_libraries(${PROJECT_NAME}
-    PRIVATE
-    Threads::Threads
+target_link_libraries(${PROJECT_NAME} PRIVATE ${JACK_LIBRARY} ws2_32 wsock32)
+
+# Windows-specific definitions
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    _WIN32_WINNT=0x0601
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+    UNICODE
+    _UNICODE
 )
 
-# Platform specific libraries
-if(WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 wsock32)
-elseif(UNIX)
-    target_link_libraries(${PROJECT_NAME} PRIVATE pthread)
-endif()
+# Compiler options
+target_compile_options(${PROJECT_NAME} PRIVATE
+    $<$<CONFIG:Debug>:/W4 /Od /Zi>
+    $<$<CONFIG:Release>:/O2 /DNDEBUG>
+)
 
-# Compiler definitions
-if(WIN32)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE
-        _WIN32_WINNT=0x0601
-        WIN32_LEAN_AND_MEAN
-    )
-endif()
-
-# Set output directories
+# Set output directory
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# Install targets
-install(TARGETS ${PROJECT_NAME}
-    RUNTIME DESTINATION bin
-)
-
-# Create directories for runtime
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/logs)
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/state)
-
-# Add custom target for running the service
-add_custom_target(run
-    COMMAND ${CMAKE_BINARY_DIR}/${PROJECT_NAME}
-    DEPENDS ${PROJECT_NAME}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    COMMENT "Running JACK Bridge Service"
-)
-
-# Print configuration summary
-message(STATUS "")
-message(STATUS "JACK Bridge Service Configuration:")
-message(STATUS "=================================")
-message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
-message(STATUS "Platform: ${CMAKE_SYSTEM_NAME}")
-message(STATUS "Output directory: ${CMAKE_BINARY_DIR}")
-message(STATUS "")
+install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
