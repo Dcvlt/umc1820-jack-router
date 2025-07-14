@@ -4,18 +4,28 @@
   "main": "server.js",
   "scripts": {
     "start": "NODE_ENV=production node server.js",
-    "dev": "NODE_ENV=development concurrently \"npm:dev:frontend\" \"npm:dev:backend\"",
+    "dev": "NODE_ENV=development concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "nodemon server.js --watch routes --watch services --watch utils --watch middleware --watch config --watch constants",
     "dev:frontend": "vite",
-    "dev:backend": "nodemon server.js",
+    "dev:server-only": "NODE_ENV=development nodemon server.js",
+    "dev:debug": "NODE_ENV=development node --inspect=0.0.0.0:9229 server.js",
     "build": "vite build",
+    "build:production": "NODE_ENV=production vite build",
     "preview": "vite preview",
     "test": "echo \"Tests not implemented\" && exit 0",
     "lint": "eslint . --ext .js,.jsx",
-    "lint:fix": "eslint . --ext .js,.jsx --fix"
+    "lint:fix": "eslint . --ext .js,.jsx --fix",
+    "docker:dev": "docker-compose up -d",
+    "docker:prod": "docker-compose --profile production up -d",
+    "docker:build": "docker-compose build",
+    "docker:logs": "docker-compose logs -f",
+    "docker:down": "docker-compose down"
   },
   "dependencies": {
     "@babel/core": "^7.28.0",
     "@babel/register": "^7.27.1",
+    "@babel/preset-env": "^7.28.0",
+    "@babel/preset-react": "^7.27.1",
     "@emotion/styled": "^11.14.1",
     "@mui/material": "^7.2.0",
     "cors": "^2.8.5",
@@ -30,8 +40,6 @@
     "axios": "^1.6.0"
   },
   "devDependencies": {
-    "@babel/preset-env": "^7.28.0",
-    "@babel/preset-react": "^7.27.1",
     "@vitejs/plugin-react": "^4.0.0",
     "babel-loader": "^10.0.0",
     "concurrently": "^9.2.0",
@@ -43,6 +51,28 @@
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=8.0.0"
+  },
+  "nodemonConfig": {
+    "env": {
+      "NODE_ENV": "development"
+    },
+    "watch": [
+      "server.js",
+      "routes/",
+      "services/",
+      "utils/",
+      "middleware/",
+      "config/",
+      "constants/"
+    ],
+    "ext": "js,jsx,json",
+    "ignore": [
+      "node_modules/",
+      "dist/",
+      "logs/",
+      "*.log"
+    ],
+    "delay": "1000"
   },
   "eslintConfig": {
     "env": {
@@ -65,8 +95,20 @@
   },
   "babel": {
     "presets": [
-      "@babel/preset-env",
-      "@babel/preset-react"
+      [
+        "@babel/preset-env",
+        {
+          "targets": {
+            "node": "current"
+          }
+        }
+      ],
+      [
+        "@babel/preset-react",
+        {
+          "runtime": "automatic"
+        }
+      ]
     ]
   }
 }

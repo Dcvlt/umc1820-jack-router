@@ -1,4 +1,4 @@
-// routes/index.js - Route aggregator with conditional JSX loading
+// routes/index.js - Development-optimized with live SSR
 const express = require('express');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
@@ -22,43 +22,72 @@ const {
   ROUTING_PRESETS,
 } = require('../constants/constants.cjs');
 
-// Conditionally load JSX component
+// SSR setup - optimized for development
 let JackAudioRouter = null;
 let React = null;
 let renderToPipeableStream = null;
 
-try {
-  // Only load React and JSX in production with SSR
-  if (!isDev) {
-    React = require('react');
-    renderToPipeableStream = require('react-dom/server').renderToPipeableStream;
+function setupSSR() {
+  if (isDev) {
+    logger.info('🔧 Setting up development SSR with live file reloading...');
 
-    // Babel register for JSX (only if needed)
-    require('@babel/register')({
-      extensions: ['.js', '.jsx', '.cjsx'],
-      presets: ['@babel/preset-react'],
-      cache: false,
-    });
-
-    // Try to load the JSX component
     try {
-      const jackAudioModule = require('/src/jackAudioRouter.jsx');
-      JackAudioRouter =
-        jackAudioModule.JackAudioRouter || jackAudioModule.default;
-    } catch (jsxError) {
-      logger.warn(
-        '⚠️ JSX component not found, SSR disabled:',
-        jsxError.message
-      );
-      JackAudioRouter = null;
+      // Clear require cache for hot reloading in development
+      const jsxPath = path.resolve(__dirname, '../src/jackAudioRouter.jsx');
+      delete require.cache[jsxPath];
+      delete require.cache[require.resolve('react')];
+      delete require.cache[require.resolve('react-dom/server')];
+
+      React = require('react');
+      renderToPipeableStream =
+        require('react-dom/server').renderToPipeableStream;
+
+      // Setup Babel register for JSX compilation
+      require('@babel/register')({
+        extensions: ['.js', '.jsx', '.cjsx'],
+        presets: [
+          ['@babel/preset-env', { targets: { node: 'current' } }],
+          ['@babel/preset-react', { runtime: 'automatic' }],
+        ],
+        cache: false, // Disable cache in development for hot reload
+        ignore: [/node_modules/],
+        only: [
+          path.resolve(__dirname, '../src'),
+          path.resolve(__dirname, '../components'),
+          path.resolve(__dirname, '../hooks'),
+        ],
+      });
+
+      // Try to load the JSX component from mounted source
+      try {
+        const jackAudioModule = require('../src/jackAudioRouter.jsx');
+        JackAudioRouter =
+          jackAudioModule.JackAudioRouter ||
+          jackAudioModule.default ||
+          jackAudioModule;
+
+        if (typeof JackAudioRouter !== 'function') {
+          throw new Error('Loaded module is not a React component');
+        }
+
+        logger.info('✅ Development SSR enabled with live JSX reloading');
+        return true;
+      } catch (jsxError) {
+        logger.warn('⚠️ JSX component loading failed:', jsxError.message);
+        logger.warn('📁 Expected file: src/jackAudioRouter.jsx');
+        return false;
+      }
+    } catch (error) {
+      logger.warn('⚠️ Development SSR setup failed:', error.message);
+      return false;
     }
   }
-} catch (error) {
-  logger.warn(
-    '⚠️ React SSR setup failed, falling back to static serving:',
-    error.message
-  );
+
+  return false;
 }
+
+// Initialize SSR
+const ssrEnabled = setupSSR();
 
 const router = express.Router();
 
@@ -68,139 +97,119 @@ router.use('/api/presets', presetRoutes);
 router.use('/api/mqtt', mqttRoutes);
 router.use('/health', healthRoutes);
 
-// Development: Proxy to Vite dev server
+// Development: Enhanced setup with SSR + Vite proxy
 if (isDev) {
-  logger.info('🔧 Setting up development proxy to Vite server');
+  logger.info('🔧 Setting up development environment...');
+  logger.info(`   SSR Enabled: ${ssrEnabled ? '✅' : '❌'}`);
+  logger.info('   Vite Proxy: ✅ (http://localhost:5173)');
+  logger.info('   Hot Reload: ✅');
+
+  // SSR for main route if available
+  router.get('/', async (req, res) => {
+    if (ssrEnabled && JackAudioRouter && React && renderToPipeableStream) {
+      try {
+        // Re-setup SSR on each request in development for hot reload
+        setupSSR();
+        await renderAppSSR(req, res);
+        return;
+      } catch (error) {
+        logger.error(
+          'Development SSR failed, falling back to proxy:',
+          error.message
+        );
+      }
+    }
+
+    // Fallback to Vite proxy
+    return createProxyMiddleware({
+      target: 'http://localhost:5173',
+      changeOrigin: true,
+      ws: true,
+      onError: (err, req, res) => {
+        logger.error('Vite proxy error:', err.message);
+        res.status(500).send(`
+          <html>
+            <body>
+              <h1>Development Server Error</h1>
+              <p>Both SSR and Vite proxy failed.</p>
+              <p>Make sure Vite is running: <code>npm run dev:frontend</code></p>
+              <pre>${err.message}</pre>
+            </body>
+          </html>
+        `);
+      },
+    })(req, res);
+  });
+
+  // All other routes go to Vite (for HMR, assets, etc.)
   router.use(
     '/',
     createProxyMiddleware({
       target: 'http://localhost:5173',
       changeOrigin: true,
-      ws: true,
+      ws: true, // Enable WebSocket proxy for HMR
       onError: (err, req, res) => {
-        logger.error('Proxy error:', err.message);
-        res.status(500).send('Proxy error occurred');
+        logger.error('Vite proxy error:', err.message);
+
+        // Only send error response if headers haven't been sent
+        if (!res.headersSent) {
+          res.status(500).send('Vite development server not available');
+        }
       },
     })
   );
 } else {
-  // Production: Serve static files and optionally SSR
+  // Production: Serve static files with optional SSR
   const staticPath = path.join(__dirname, '..', 'dist', 'client');
+
+  logger.info(`📁 Production mode: serving static files from ${staticPath}`);
 
   // Serve static assets
   router.use(
     express.static(staticPath, {
-      maxAge: '1y', // Cache static assets for 1 year
+      maxAge: '1y',
       etag: true,
       lastModified: true,
     })
   );
 
-  // Main route - use SSR if available, otherwise serve static
+  // Main route
   router.get('/', async (req, res) => {
-    try {
-      if (JackAudioRouter && React && renderToPipeableStream) {
-        await renderApp(req, res);
-      } else {
-        await serveStaticIndex(req, res);
-      }
-    } catch (error) {
-      logger.error('Error serving app:', error);
+    if (ssrEnabled) {
+      await renderAppSSR(req, res);
+    } else {
       await serveStaticIndex(req, res);
     }
   });
 
   // Catch-all route for SPA routing
   router.get('*', async (req, res) => {
-    try {
-      // Check if it's an asset request
-      if (req.path.includes('.')) {
-        return notFoundHandler(req, res);
-      }
+    if (req.path.includes('.')) {
+      return notFoundHandler(req, res);
+    }
 
-      // Serve the main app for client-side routing
-      if (JackAudioRouter && React && renderToPipeableStream) {
-        await renderApp(req, res);
-      } else {
-        await serveStaticIndex(req, res);
-      }
-    } catch (error) {
-      logger.error('Error serving SPA route:', error);
+    if (ssrEnabled) {
+      await renderAppSSR(req, res);
+    } else {
       await serveStaticIndex(req, res);
     }
   });
 }
 
 /**
- * Serve static index.html file (fallback when SSR is not available)
+ * Render the React application with SSR (development + production)
  */
-async function serveStaticIndex(req, res) {
+async function renderAppSSR(req, res) {
   try {
-    const staticPath = path.join(__dirname, '..', 'dist', 'client');
-    const indexPath = path.join(staticPath, 'index.html');
+    logger.debug('🎭 Rendering with SSR');
 
-    try {
-      const indexContent = await fs.readFile(indexPath, 'utf-8');
-
-      // Inject initial data into the static HTML
-      const initialData = await getInitialData();
-      const modifiedContent = indexContent.replace(
-        '</head>',
-        `<script>window.__INITIAL_DATA__ = ${JSON.stringify(initialData).replace(/</g, '\\u003c')};</script></head>`
-      );
-
-      res.setHeader('Content-Type', 'text/html');
-      res.send(modifiedContent);
-    } catch (fileError) {
-      logger.error('Static index.html not found:', fileError.message);
-      // Send a minimal HTML page
-      res.setHeader('Content-Type', 'text/html');
-      res.send(`<!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>JACK Audio Router</title>
-        </head>
-        <body>
-            <div id="root">
-                <div style="display: flex; justify-content: center; align-items: center; height: 100vh; font-family: Arial, sans-serif;">
-                    <div>
-                        <h2>JACK Audio Router</h2>
-                        <p>Service is running. Frontend not available.</p>
-                        <p>API available at <a href="/api">/api</a></p>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>`);
-    }
-  } catch (error) {
-    logger.error('Error serving static index:', error);
-    res.status(500).send('Internal Server Error');
-  }
-}
-
-/**
- * Render the React application with SSR
- */
-async function renderApp(req, res) {
-  try {
-    const staticPath = path.join(__dirname, '..', 'dist', 'client');
-    const manifestPath = path.join(staticPath, 'manifest.json');
-
-    let manifest;
-    try {
-      manifest = JSON.parse(await fs.readFile(manifestPath, 'utf-8'));
-    } catch (error) {
-      logger.error('Failed to read manifest.json:', error.message);
-      manifest = { 'main.js': { file: 'assets/main.js' } };
-    }
-
-    const scriptPath = manifest['main.js']?.file || 'assets/main.js';
-
-    // Get initial data for SSR
+    // In development, always get fresh initial data
     const initialData = await getInitialData();
+
+    // In development, reload component for hot reload
+    if (isDev) {
+      setupSSR();
+    }
 
     const reactElement = React.createElement(JackAudioRouter, {
       initialData,
@@ -210,53 +219,109 @@ async function renderApp(req, res) {
       onShellReady() {
         res.status(200);
         res.setHeader('Content-Type', 'text/html');
-        res.write(`<!DOCTYPE html>
-          <html lang="en">
-          <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>JACK Audio Router</title>
-              <style> 
-                body { 
-                  margin: 0; 
-                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-                } 
-                #loading {
-                  display: flex;
-                  justify-content: center;
-                  align-items: center;
-                  height: 100vh;
-                  font-size: 18px;
-                  color: #666;
-                }
-              </style>
-          </head>
-          <body>
-              <div id="loading">Loading JACK Audio Router...</div>
-              <div id="root">`);
+
+        // Enhanced HTML template for development
+        const htmlTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JACK Audio Router${isDev ? ' (Development)' : ''}</title>
+    ${isDev ? '<script type="module" src="/@vite/client"></script>' : ''}
+    <style> 
+      body { 
+        margin: 0; 
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      } 
+      #loading {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        font-size: 18px;
+        color: #666;
+      }
+      ${isDev ? '.dev-indicator { position: fixed; top: 10px; right: 10px; background: #ff6b35; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; z-index: 9999; }' : ''}
+    </style>
+</head>
+<body>
+    ${isDev ? '<div class="dev-indicator">DEV MODE</div>' : ''}
+    <div id="loading">Loading JACK Audio Router...</div>
+    <div id="root">`;
+
+        res.write(htmlTemplate);
         stream.pipe(res);
+
+        const scriptSrc = isDev ? '/src/client.jsx' : '/assets/main.js';
         res.write(`</div>
-          <script>
-              document.getElementById('loading').style.display = 'none';
-              window.__INITIAL_DATA__ = ${JSON.stringify(initialData).replace(/</g, '\\u003c')};
-          </script>
-          <script type="module" src="/${scriptPath}"></script>
-          </body>
-          </html>`);
+    <script>
+        document.getElementById('loading').style.display = 'none';
+        window.__INITIAL_DATA__ = ${JSON.stringify(initialData).replace(/</g, '\\u003c')};
+    </script>
+    <script type="module" src="${scriptSrc}"></script>
+</body>
+</html>`);
       },
       onError(error) {
         logger.error('SSR Error:', error);
-        res.status(500).send('Internal Server Error');
+        if (!res.headersSent) {
+          res.status(500).send('Server-side rendering failed');
+        }
       },
     });
   } catch (error) {
-    logger.error('Error in renderApp:', error);
-    throw error;
+    logger.error('Error in renderAppSSR:', error);
+
+    if (!res.headersSent) {
+      if (isDev) {
+        // In development, show detailed error
+        res.status(500).send(`
+          <html>
+            <body>
+              <h1>SSR Development Error</h1>
+              <pre>${error.stack}</pre>
+              <p><a href="/">Reload</a></p>
+            </body>
+          </html>
+        `);
+      } else {
+        await serveStaticIndex(req, res);
+      }
+    }
   }
 }
 
 /**
- * Get initial data for SSR
+ * Serve static index.html file (production fallback)
+ */
+async function serveStaticIndex(req, res) {
+  try {
+    const staticPath = path.join(__dirname, '..', 'dist', 'client');
+    const indexPath = path.join(staticPath, 'index.html');
+
+    try {
+      const indexContent = await fs.readFile(indexPath, 'utf-8');
+      const initialData = await getInitialData();
+
+      const modifiedContent = indexContent.replace(
+        '</head>',
+        `<script>window.__INITIAL_DATA__ = ${JSON.stringify(initialData).replace(/</g, '\\u003c')};</script></head>`
+      );
+
+      res.setHeader('Content-Type', 'text/html');
+      res.send(modifiedContent);
+    } catch (fileError) {
+      logger.error('Static index.html not found:', fileError.message);
+      res.status(500).send('Application not built. Run npm run build first.');
+    }
+  } catch (error) {
+    logger.error('Error serving static index:', error);
+    res.status(500).send('Internal Server Error');
+  }
+}
+
+/**
+ * Get initial data for SSR/hydration
  */
 async function getInitialData() {
   try {
@@ -268,7 +333,7 @@ async function getInitialData() {
         const connectionOutput = await jackService.listConnections();
         currentConnections = parseJackConnections(connectionOutput);
       } catch (error) {
-        logger.warn('Failed to get connections for SSR:', error.message);
+        logger.warn('Failed to get connections:', error.message);
       }
     }
 
@@ -278,6 +343,7 @@ async function getInitialData() {
       deviceConfig: DEVICE_CONFIG,
       availablePresets: Object.keys(ROUTING_PRESETS),
       timestamp: new Date().toISOString(),
+      isDev: isDev,
     };
   } catch (error) {
     logger.error('Error getting initial data:', error);
@@ -287,6 +353,7 @@ async function getInitialData() {
       deviceConfig: DEVICE_CONFIG,
       availablePresets: Object.keys(ROUTING_PRESETS),
       timestamp: new Date().toISOString(),
+      isDev: isDev,
       error: error.message,
     };
   }

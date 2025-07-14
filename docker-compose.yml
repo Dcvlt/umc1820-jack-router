@@ -1,4 +1,4 @@
-# docker-compose.yml - Hybrid setup with local C++ bridge
+# docker-compose.yml - Development-focused setup
 version: '3.8'
 
 services:
@@ -13,9 +13,12 @@ services:
     volumes:
       - mosquitto-data:/mosquitto/data
       - mosquitto-logs:/mosquitto/log
-      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:rw
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       - jack-network
+    extra_hosts:
+      - "jack-bridge:172.18.16.1"
+      - "host.docker.internal:172.18.16.1"
     healthcheck:
       test:
         [
@@ -33,54 +36,56 @@ services:
       timeout: 10s
       retries: 3
 
-  # JACK Audio Router (Node.js application in Docker)
+  # JACK Audio Router - DEVELOPMENT MODE (default)
   jack-router:
     build:
       context: .
       dockerfile: Dockerfile
-      target: production
-    container_name: jack-audio-router
+      target: development
+    container_name: jack-audio-router-dev
     restart: unless-stopped
     ports:
       - '5555:5555' # HTTP port
       - '5556:5556' # HTTPS port
+      - '5173:5173' # Vite dev server
+      - '9229:9229' # Node.js debug port
     volumes:
-      - router-state:/app/state
+      # Mount entire project for hot reload
+      - .:/app
+      # Prevent node_modules from being overwritten
+      - /app/node_modules
+      # Mount additional directories for development
+      - ./logs:/app/logs
       - router-ssl:/app/ssl
-      - router-logs:/app/logs
+      - router-state:/app/state
     environment:
-      # Server configuration
-      - NODE_ENV=production
+      # Development environment
+      - NODE_ENV=development
       - PORT=5555
       - HTTPS_PORT=5556
       - HOST=0.0.0.0
-      - DEPLOYMENT_MODE=hybrid
+      - DEPLOYMENT_MODE=hybrid-dev
 
       # JACK Bridge connection (LOCAL Windows service)
-      - JACK_BRIDGE_HOST=host.docker.internal
+      - JACK_BRIDGE_HOST=172.18.16.1
       - JACK_BRIDGE_PORT=6666
       - JACK_BRIDGE_WS_PORT=6667
 
       # MQTT configuration
       - MQTT_ENABLED=true
       - MQTT_HOST=mqtt://mosquitto:1883
-      - MQTT_CLIENT_ID=jack-audio-router-hybrid
+      - MQTT_CLIENT_ID=jack-audio-router-dev
 
-      # SSL Configuration (REQUIRED for Home Assistant)
+      # SSL Configuration (auto-generate for dev)
       - SSL_ENABLED=true
       - SSL_AUTO_GENERATE=true
-      - FORCE_HTTPS=true
+      - FORCE_HTTPS=false
 
-      # Home Assistant Integration
-      - HA_INTEGRATION_ENABLED=true
-      - CORS_ORIGINS=https://localhost:5556,https://homeassistant.local:8123
-      - CSP_FRAME_ANCESTORS=https://homeassistant.local:8123
-
-      # Logging
-      - LOG_LEVEL=INFO
-      - LOG_COLORS=false
-      - LOG_FILE_ENABLED=true
-      - LOG_FILE_PATH=/app/logs/jack-router.log
+      # Development-specific settings
+      - LOG_LEVEL=DEBUG
+      - LOG_COLORS=true
+      - HOT_RELOAD_ENABLED=true
+      - DEV_PROXY_TARGET=http://localhost:5173
 
       # Features
       - FEATURE_SSL_ENABLED=true
@@ -90,6 +95,66 @@ services:
       - FEATURE_HEALTH_MONITORING=true
 
       # State management
+      - STATE_AUTO_SAVE_INTERVAL=10000
+      - STATE_BACKUP_ENABLED=true
+
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - jack-network
+    extra_hosts:
+      - "jack-bridge:172.18.16.1"
+      - "host.docker.internal:172.18.16.1"
+    # Development doesn't need health checks (faster startup)
+    command: ['npm', 'run', 'dev']
+
+  # JACK Audio Router - PRODUCTION MODE (opt-in)
+  jack-router-prod:
+    profiles: ['production']
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: jack-audio-router-prod
+    restart: unless-stopped
+    ports:
+      - '5555:5555'
+      - '5556:5556'
+    volumes:
+      - router-state:/app/state
+      - router-ssl:/app/ssl
+      - router-logs:/app/logs
+    environment:
+      - NODE_ENV=production
+      - PORT=5555
+      - HTTPS_PORT=5556
+      - HOST=0.0.0.0
+      - DEPLOYMENT_MODE=hybrid
+
+      - JACK_BRIDGE_HOST=172.18.16.1
+      - JACK_BRIDGE_PORT=6666
+      - JACK_BRIDGE_WS_PORT=6667
+
+      - MQTT_ENABLED=true
+      - MQTT_HOST=mqtt://mosquitto:1883
+      - MQTT_CLIENT_ID=jack-audio-router-prod
+
+      - SSL_ENABLED=true
+      - SSL_AUTO_GENERATE=true
+      - FORCE_HTTPS=true
+
+      - LOG_LEVEL=INFO
+      - LOG_COLORS=false
+      - LOG_FILE_ENABLED=true
+      - LOG_FILE_PATH=/app/logs/jack-router.log
+
+      - FEATURE_SSL_ENABLED=true
+      - FEATURE_MQTT_ENABLED=true
+      - FEATURE_STATE_PERSISTENCE=true
+      - FEATURE_CONNECTION_TRACKING=true
+      - FEATURE_HEALTH_MONITORING=true
+
       - STATE_AUTO_SAVE_INTERVAL=30000
       - STATE_BACKUP_ENABLED=true
 
@@ -98,6 +163,9 @@ services:
         condition: service_healthy
     networks:
       - jack-network
+    extra_hosts:
+      - "jack-bridge:172.18.16.1"
+      - "host.docker.internal:172.18.16.1"
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:5555/health']
       interval: 30s
@@ -118,50 +186,14 @@ services:
     command: redis-server --appendonly yes
     networks:
       - jack-network
+    extra_hosts:
+      - "jack-bridge:172.18.16.1"
+      - "host.docker.internal:172.18.16.1"
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 30s
       timeout: 10s
       retries: 3
-
-  # Development service (hot reload)
-  jack-router-dev:
-    profiles: ['dev']
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: development
-    container_name: jack-audio-router-dev
-    restart: unless-stopped
-    ports:
-      - '5555:5555'
-      - '5556:5556'
-      - '5173:5173' # Vite dev server
-      - '9229:9229' # Node.js debug port
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - router-state:/app/state
-      - router-ssl:/app/ssl
-      - ./logs:/app/logs
-    environment:
-      - NODE_ENV=development
-      - PORT=5555
-      - HTTPS_PORT=5556
-      - HOST=0.0.0.0
-      - DEPLOYMENT_MODE=hybrid-dev
-      - JACK_BRIDGE_HOST=host.docker.internal
-      - JACK_BRIDGE_PORT=6666
-      - MQTT_ENABLED=true
-      - MQTT_HOST=mqtt://mosquitto:1883
-      - SSL_AUTO_GENERATE=true
-      - LOG_LEVEL=DEBUG
-      - HOT_RELOAD_ENABLED=true
-    depends_on:
-      mosquitto:
-        condition: service_healthy
-    networks:
-      - jack-network
 
 networks:
   jack-network:
@@ -192,3 +224,4 @@ volumes:
   redis-data:
     driver: local
     name: jack-redis-data
+

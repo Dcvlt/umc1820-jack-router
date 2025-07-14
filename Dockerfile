@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for JACK Audio Router
+# Multi-stage Dockerfile optimized for development
 FROM node:18-alpine AS base
 
 # Install system dependencies
@@ -10,57 +10,54 @@ RUN apk add --no-cache \
     python3 \
     py3-pip \
     git \
-    openssl
+    openssl \
+    dumb-init
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
-
-# Development stage
+# Development stage (default for development)
 FROM base AS development
+
+# Install ALL dependencies (including devDependencies)
 RUN npm ci && npm cache clean --force
+
+# Install development tools globally
+RUN npm install -g nodemon concurrently
+
+# Create required directories
+RUN mkdir -p ssl state logs src routes services utils middleware components hooks constants config
+
+# Copy source files (but they'll be overridden by volume mounts)
 COPY . .
+
+# Set proper permissions
+RUN chown -R node:node /app
+USER node
+
+# Expose all development ports
 EXPOSE 5555 5556 5173 9229
+
+# Development command with hot reload
 CMD ["npm", "run", "dev"]
 
-# Build stage
-FROM base AS build
-COPY . .
-RUN npm ci && npm run build
+# Production stage (opt-in with profiles)
+FROM base AS production
 
-# Production stage
-FROM node:18-alpine AS production
+# Install only production dependencies
+RUN npm ci --only=production && npm cache clean --force
 
 # Install runtime dependencies
-RUN apk add --no-cache \
-    curl \
-    bash \
-    openssl \
-    tini
+RUN apk add --no-cache tini
 
 # Create app user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nextjs -u 1001
 
-WORKDIR /app
-
 # Copy built application
-COPY --from=build --chown=nextjs:nodejs /app/dist ./dist
-COPY --from=build --chown=nextjs:nodejs /app/node_modules ./node_modules
-COPY --from=build --chown=nextjs:nodejs /app/package*.json ./
-COPY --from=build --chown=nextjs:nodejs /app/server.js ./
-COPY --from=build --chown=nextjs:nodejs /app/config ./config
-COPY --from=build --chown=nextjs:nodejs /app/routes ./routes
-COPY --from=build --chown=nextjs:nodejs /app/services ./services
-COPY --from=build --chown=nextjs:nodejs /app/utils ./utils
-COPY --from=build --chown=nextjs:nodejs /app/middleware ./middleware
-COPY --from=build --chown=nextjs:nodejs /app/constants ./constants
-COPY --from=build --chown=nextjs:nodejs /app/hooks ./hooks
-COPY --from=build --chown=nextjs:nodejs /app/components ./components
+COPY --chown=nextjs:nodejs . .
 
 # Create required directories
 RUN mkdir -p ssl state logs && \
@@ -76,4 +73,4 @@ EXPOSE 5555 5556
 
 # Use tini for proper signal handling
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "server.js"]
+CMD ["npm", "run", "dev"]

@@ -6,12 +6,10 @@ const path = require('path');
 const fs = require('fs').promises;
 
 // Configuration
-const config = require('./config');
 const { isDev, PORT, HTTPS_PORT } = require('./config/environment');
 
 // Services
 const jackService = require('./services/jackService');
-const connectionService = require('./services/connectionService');
 const stateService = require('./services/stateService');
 const mqttService = require('./services/mqttService');
 
@@ -19,7 +17,6 @@ const mqttService = require('./services/mqttService');
 const routes = require('./routes');
 
 // Middleware
-const corsMiddleware = require('./middleware/cors');
 const { errorHandler } = require('./middleware/errorHandler');
 
 // Utils
