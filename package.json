@@ -9,12 +9,6 @@
     "dev:backend": "nodemon server.js",
     "build": "vite build",
     "preview": "vite preview",
-    "docker:build": "docker-compose build",
-    "docker:up": "docker-compose up -d",
-    "docker:down": "docker-compose down",
-    "docker:dev": "docker-compose --profile dev up -d",
-    "docker:logs": "docker-compose logs -f",
-    "docker:clean": "docker-compose down -v && docker system prune -f",
     "test": "echo \"Tests not implemented\" && exit 0",
     "lint": "eslint . --ext .js,.jsx",
     "lint:fix": "eslint . --ext .js,.jsx --fix"

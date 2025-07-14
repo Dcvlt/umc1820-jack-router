@@ -1,10 +1,65 @@
+# Dependencies
 node_modules
-.env
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Production build
 dist
-*.crt
-*.key
+build
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs
 *.log
-*.pem
-*.pid
+
+# State files
 audio_router_state.json
 audio_router_state.backup.json
+last_state.json
+
+# SSL certificates
+*.crt
+*.key
+*.pem
+
+# C++ Build artifacts
+jack-bridge-local/build/
+jack-bridge-local/*.exe
+jack-bridge-local/*.obj
+jack-bridge-local/*.lib
+jack-bridge-local/*.dll
+jack-bridge-local/*.pdb
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.sln.docstates
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

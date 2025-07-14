@@ -22,7 +22,7 @@ export default defineConfig({
     manifest: true, // Important for production builds
     rollupOptions: {
       input: {
-        main: './client.jsx',
+        main: './src/client.jsx',
       },
     },
   },

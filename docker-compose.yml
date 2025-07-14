@@ -1,62 +1,19 @@
+# docker-compose.yml - Hybrid setup with local C++ bridge
 version: '3.8'
 
 services:
-  # Windows JACK Bridge Service (Native JACK API)
-  jack-bridge-windows:
-    build:
-      context: ./jack-bridge
-      dockerfile: Dockerfile.windows
-    platform: windows/amd64
-    container_name: jack-bridge-windows
-    restart: unless-stopped
-    ports:
-      - '6666:6666'
-    environment:
-      - JACK_BRIDGE_API_PORT=6666
-      - JACK_SAMPLE_RATE=48000
-      - JACK_BUFFER_SIZE=128
-      - JACK_DRIVER=wasapi
-      - JACK_DEVICE=default
-    volumes:
-      - jack-bridge-state:/jack-bridge/state
-      - jack-bridge-logs:/jack-bridge/logs
-      # Mount Windows audio devices (if needed)
-      - type: bind
-        source: \\.\pipe\
-        target: C:\pipe
-        read_only: false
-    networks:
-      - jack-network
-    healthcheck:
-      test:
-        [
-          'CMD',
-          'powershell',
-          '-Command',
-          "try { Invoke-WebRequest -Uri 'http://localhost:6666/health' -UseBasicParsing -TimeoutSec 5 | Out-Null; exit 0 } catch { exit 1 }",
-        ]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 120s # Give JACK plenty of time to initialize
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus:
-
-  # MQTT Broker (Linux container)
+  # MQTT Broker (Docker service)
   mosquitto:
-    image: eclipse-mosquitto:2.0
-    container_name: mosquitto
+    image: eclipse-mosquitto:2.0.18
+    container_name: jack-audio-mosquitto
     restart: unless-stopped
     ports:
       - '1883:1883'
-      - '9001:9001'
+      - '7777:7777'
     volumes:
       - mosquitto-data:/mosquitto/data
       - mosquitto-logs:/mosquitto/log
-      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:rw
     networks:
       - jack-network
     healthcheck:
@@ -76,13 +33,13 @@ services:
       timeout: 10s
       retries: 3
 
-  # JACK Audio Router (Linux container)
+  # JACK Audio Router (Node.js application in Docker)
   jack-router:
     build:
       context: .
       dockerfile: Dockerfile
       target: production
-    container_name: jack-router
+    container_name: jack-audio-router
     restart: unless-stopped
     ports:
       - '5555:5555' # HTTP port
@@ -97,17 +54,17 @@ services:
       - PORT=5555
       - HTTPS_PORT=5556
       - HOST=0.0.0.0
-      - DEPLOYMENT_MODE=docker
+      - DEPLOYMENT_MODE=hybrid
 
-      # JACK Bridge connection (Windows container)
-      - JACK_BRIDGE_HOST=jack-bridge-windows
+      # JACK Bridge connection (LOCAL Windows service)
+      - JACK_BRIDGE_HOST=host.docker.internal
       - JACK_BRIDGE_PORT=6666
       - JACK_BRIDGE_WS_PORT=6667
 
       # MQTT configuration
       - MQTT_ENABLED=true
       - MQTT_HOST=mqtt://mosquitto:1883
-      - MQTT_CLIENT_ID=jack-audio-router-docker
+      - MQTT_CLIENT_ID=jack-audio-router-hybrid
 
       # SSL Configuration (REQUIRED for Home Assistant)
       - SSL_ENABLED=true
@@ -123,6 +80,7 @@ services:
       - LOG_LEVEL=INFO
       - LOG_COLORS=false
       - LOG_FILE_ENABLED=true
+      - LOG_FILE_PATH=/app/logs/jack-router.log
 
       # Features
       - FEATURE_SSL_ENABLED=true
@@ -134,9 +92,8 @@ services:
       # State management
       - STATE_AUTO_SAVE_INTERVAL=30000
       - STATE_BACKUP_ENABLED=true
+
     depends_on:
-      jack-bridge-windows:
-        condition: service_healthy
       mosquitto:
         condition: service_healthy
     networks:
@@ -148,22 +105,90 @@ services:
       retries: 3
       start_period: 30s
 
+  # Redis (Optional - for caching and session management)
+  redis:
+    profiles: ['cache']
+    image: redis:7-alpine
+    container_name: jack-audio-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - jack-network
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Development service (hot reload)
+  jack-router-dev:
+    profiles: ['dev']
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: jack-audio-router-dev
+    restart: unless-stopped
+    ports:
+      - '5555:5555'
+      - '5556:5556'
+      - '5173:5173' # Vite dev server
+      - '9229:9229' # Node.js debug port
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - router-state:/app/state
+      - router-ssl:/app/ssl
+      - ./logs:/app/logs
+    environment:
+      - NODE_ENV=development
+      - PORT=5555
+      - HTTPS_PORT=5556
+      - HOST=0.0.0.0
+      - DEPLOYMENT_MODE=hybrid-dev
+      - JACK_BRIDGE_HOST=host.docker.internal
+      - JACK_BRIDGE_PORT=6666
+      - MQTT_ENABLED=true
+      - MQTT_HOST=mqtt://mosquitto:1883
+      - SSL_AUTO_GENERATE=true
+      - LOG_LEVEL=DEBUG
+      - HOT_RELOAD_ENABLED=true
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - jack-network
+
 networks:
   jack-network:
     driver: bridge
+    name: jack-audio-network
 
 volumes:
-  jack-bridge-state:
-    driver: local
-  jack-bridge-logs:
-    driver: local
+  # Router service volumes
   router-state:
     driver: local
+    name: jack-router-state
   router-ssl:
     driver: local
+    name: jack-router-ssl
   router-logs:
     driver: local
+    name: jack-router-logs
+
+  # MQTT service volumes
   mosquitto-data:
     driver: local
+    name: jack-mosquitto-data
   mosquitto-logs:
     driver: local
+    name: jack-mosquitto-logs
+
+  # Redis volumes (optional)
+  redis-data:
+    driver: local
+    name: jack-redis-data
